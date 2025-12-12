@@ -1,7 +1,3 @@
-#pqr mac ~/pythons/default/.venv/bin/python3
-#pqr win C:\Users\dinki\pythons\venv\Scripts\python.exe
-#pqr linux /home/dinki/venv/bin/python
-
 import sys
 import os
 from pathlib import Path
