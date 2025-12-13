@@ -162,10 +162,8 @@ func (l *LauncherApp) setupUI() {
 		l.refreshLayout()
 	})
 
-	titleLabel := widget.NewLabelWithStyle("PyQuickBox", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	
 	l.SearchEntry = widget.NewEntry()
-	l.SearchEntry.SetPlaceHolder("검색...")
+	l.SearchEntry.SetPlaceHolder("Search...")
 	l.SearchEntry.OnChanged = func(s string) {
 		l.SearchText = s
 		l.updateGridUI()
@@ -173,8 +171,8 @@ func (l *LauncherApp) setupUI() {
 	// 검색창 크기 고정 (GridWrap 사용)
 	searchContainer := container.NewGridWrap(fyne.NewSize(200, 34), l.SearchEntry)
 	
-	// 슬라이더
-	iconSlider := widget.NewSlider(60, 200)
+	// 슬라이더 (최소값 32로 변경)
+	iconSlider := widget.NewSlider(32, 200)
 	iconSlider.Value = float64(l.IconSize)
 	var debounceTimer *time.Timer
 	iconSlider.OnChanged = func(f float64) {
@@ -196,13 +194,14 @@ func (l *LauncherApp) setupUI() {
 	})
 
 	topRightControls := container.NewHBox(
-		widget.NewIcon(theme.SearchIcon()), searchContainer,
-		widget.NewIcon(theme.GridIcon()), sliderContainer,
+		// widget.NewIcon(theme.GridIcon()) Removed as requested
+		sliderContainer,
 		settingsBtn,
 	)
 	
-	// titleLabel 왼쪽에 toggleBtn 배치
-	topLeftControls := container.NewHBox(toggleBtn, titleLabel)
+	// titleLabel Removed
+	// Search Bar moved to Left
+	topLeftControls := container.NewHBox(toggleBtn, searchContainer)
 	
 	l.TopBar = container.NewBorder(nil, nil, topLeftControls, topRightControls)
 
@@ -274,12 +273,13 @@ func (l *LauncherApp) updateGridUI() {
 
 	// 그리드 생성 (섹션 헤더 없이)
 	// 텍스트 높이 계산
-	// 아이콘 보호를 위해 여유 공간을 충분히 확보 (4.5배)
-	textHeight := float32(l.FontSize) * 4.5
+	// 2줄만 허용하므로 높이를 최적화 (Font Size * 2.8)
+	// 약 2줄 높이 + 약간의 여유
+	textHeight := float32(l.FontSize) * 2.8
 	
 	// 아이콘 간격 넓히기: 아이콘 크기 + 40 (좌우 여백)
 	itemWidth := l.IconSize + 40
-	itemHeight := l.IconSize + textHeight + 20 // 아이콘 + 텍스트 + 여백
+	itemHeight := l.IconSize + textHeight + 10 // 아이콘 + 텍스트 + 여백 (줄임)
 	
 	itemSize := fyne.NewSize(itemWidth, itemHeight)
 	grid := container.NewGridWrap(itemSize)
@@ -624,14 +624,14 @@ func (l *LauncherApp) showSettingsDialog() {
 	pythonEntry := widget.NewEntry()
 	pythonEntry.SetText(l.DefaultPythonPath)
 
-	pythonBtn := widget.NewButton("찾기", func() {
+	pythonBtn := widget.NewButton("Browse", func() {
 		dialog.ShowFileOpen(func(reader fyne.URIReadCloser, err error) {
 			if err == nil && reader != nil {
 				pythonEntry.SetText(reader.URI().Path())
 			}
 		}, l.Window)
 	})
-	
+
 	// 폰트 크기 조절
 	fontSlider := widget.NewSlider(10, 24) // 10 ~ 24
 	fontSlider.Step = 1
@@ -670,7 +670,7 @@ func (l *LauncherApp) showSettingsDialog() {
 	folderScroll := container.NewVScroll(folderList)
 	folderScroll.SetMinSize(fyne.NewSize(0, 200))
 
-	addFolderBtn := widget.NewButtonWithIcon("폴더 추가", theme.ContentAddIcon(), func() {
+	addFolderBtn := widget.NewButtonWithIcon("Add Folder", theme.ContentAddIcon(), func() {
 		dialog.ShowFolderOpen(func(uri fyne.ListableURI, err error) {
 			if err == nil && uri != nil {
 				path := uri.Path()
@@ -693,18 +693,18 @@ func (l *LauncherApp) showSettingsDialog() {
 
 	// 다이얼로그 내용 구성
 	content := container.NewVBox(
-		widget.NewLabelWithStyle("기본 파이썬 경로:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		widget.NewLabelWithStyle("Default Python Path:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		container.NewBorder(nil, nil, nil, pythonBtn, pythonEntry),
 		widget.NewSeparator(),
-		widget.NewLabelWithStyle("라벨 폰트 크기:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		widget.NewLabelWithStyle("Label Font Size:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		fontContainer,
 		widget.NewSeparator(),
-		widget.NewLabelWithStyle("등록된 폴더:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		widget.NewLabelWithStyle("Registered Folders:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		addFolderBtn,
 		folderScroll,
 	)
 
-	d := dialog.NewCustom("환경 설정", "닫기", content, l.Window)
+	d := dialog.NewCustom("Settings", "Close", content, l.Window)
 	d.Resize(fyne.NewSize(500, 600))
 
 	d.SetOnClosed(func() {
@@ -716,39 +716,69 @@ func (l *LauncherApp) showSettingsDialog() {
 	d.Show()
 }
 
-// 속성 다이얼로그
+// 속성 다이얼로그 표시
 func (l *LauncherApp) showPropertiesDialog(s ScriptItem) {
+	desc := widget.NewLabel("Script Path: " + s.Path)
+	desc.Wrapping = fyne.TextWrapBreak
+
 	catEntry := widget.NewEntry()
 	catEntry.SetText(s.Category)
-
+	
+	// OS별 인터프리터 설정
 	macEntry := widget.NewEntry()
+	macEntry.SetPlaceHolder("Path to python/sh (Mac)")
 	macEntry.SetText(s.InterpMac)
 
 	winEntry := widget.NewEntry()
+	winEntry.SetPlaceHolder("Path to python/exe (Windows)")
 	winEntry.SetText(s.InterpWin)
 
 	ubuEntry := widget.NewEntry()
+	ubuEntry.SetPlaceHolder("Path to python/sh (Ubuntu)")
 	ubuEntry.SetText(s.InterpUbuntu)
 	
-	termCheck := widget.NewCheck("터미널 창 열기", nil)
+	termCheck := widget.NewCheck("Run in Terminal", nil)
 	termCheck.Checked = s.Terminal
 
-	form := widget.NewForm(
-		widget.NewFormItem("카테고리", catEntry),
-		widget.NewFormItem("Mac 실행기", macEntry),
-		widget.NewFormItem("Win 실행기", winEntry),
-		widget.NewFormItem("Ubuntu 실행기", ubuEntry),
-		widget.NewFormItem("", termCheck),
-	)
+	form := &widget.Form{
+		Items: []*widget.FormItem{
+			{Text: "Category", Widget: catEntry},
+			{Text: "Mac Interpreter", Widget: macEntry},
+			{Text: "Win Interpreter", Widget: winEntry},
+			{Text: "Ubuntu Interpreter", Widget: ubuEntry},
+			{Text: "Option", Widget: termCheck},
+		},
+	}
 
-	d := dialog.NewCustomConfirm("스크립트 속성", "저장", "취소", form, func(b bool) {
-		if b {
-			l.updateScriptMetadata(s, catEntry.Text, macEntry.Text, winEntry.Text, ubuEntry.Text, termCheck.Checked)
-			l.refreshScripts()
-		}
-	}, l.Window)
+	content := container.NewVBox(desc, form)
+
+	// 버튼 추가 (저장/취소)
+	// Dialog 생성을 위해 먼저 변수 선언 필요? 아니면 콜백 내부에서 d 참조?
+	// d를 나중에 할당하면 클로저에서 nil panic 가능성?
+	// 하지만 showPropertiesDialog 함수 내에서는 d가 생성된 후 콜백이 실행되므로 괜찮음.
+	// 하지만 d.Hide()를 호출하려면 d가 필요함.
 	
-	d.Resize(fyne.NewSize(500, 400))
+	// 해결책: 커스텀 다이얼로그 구조체 사용하지 않고, 컨텐츠에 버튼 포함하여 NewCustom 호출.
+	// d 변수를 먼저 선언.
+	var d dialog.Dialog
+	
+	saveBtn := widget.NewButton("Save", func() {
+		l.updateScriptMetadata(s, catEntry.Text, macEntry.Text, winEntry.Text, ubuEntry.Text, termCheck.Checked)
+		l.refreshScripts()
+		if d != nil {
+			d.Hide()
+		}
+	})
+	cancelBtn := widget.NewButton("Cancel", func() {
+		if d != nil {
+			d.Hide()
+		}
+	})
+
+	contentWithButtons := container.NewBorder(nil, container.NewHBox(saveBtn, cancelBtn), nil, nil, content)
+	
+	d = dialog.NewCustom("Properties", "Close", contentWithButtons, l.Window)
+	d.Resize(fyne.NewSize(400, 400))
 	d.Show()
 }
 
@@ -1021,9 +1051,9 @@ func wrapSmart(text string, size float32, maxWidth float32) []string {
 
 func (w *ScriptWidget) TappedSecondary(e *fyne.PointEvent) {
 	menu := fyne.NewMenu("",
-		fyne.NewMenuItem("실행", func() { w.app.runScript(w.item) }),
-		fyne.NewMenuItem("파일위치 열기", func() { w.app.openFileLocation(w.item) }),
-		fyne.NewMenuItem("속성", func() { w.app.showPropertiesDialog(w.item) }),
+		fyne.NewMenuItem("Run", func() { w.app.runScript(w.item) }),
+		fyne.NewMenuItem("Open Location", func() { w.app.openFileLocation(w.item) }),
+		fyne.NewMenuItem("Properties", func() { w.app.showPropertiesDialog(w.item) }),
 	)
 	
 	widget.ShowPopUpMenuAtPosition(menu, w.app.Window.Canvas(), e.AbsolutePosition)

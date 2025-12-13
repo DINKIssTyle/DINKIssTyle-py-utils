@@ -256,7 +256,7 @@ class VideoConverterApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("DINKIssTyle - Clip to Animated Meme v2.0")
-        self.resize(600, 950)
+        self.resize(600, 1000)
         self.input_path = ""
         self.output_dir = ""
         self.is_processing = False
