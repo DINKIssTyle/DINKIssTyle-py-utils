@@ -1,8 +1,9 @@
 import SwiftUI
+import AppKit
 
 struct SettingsView: View {
     @ObservedObject var viewModel: LauncherViewModel
-    @Environment(\.presentationMode) var presentationMode
+    @Environment(\.dismiss) private var dismiss
     
     var body: some View {
         VStack(spacing: 20) {
@@ -90,7 +91,7 @@ struct SettingsView: View {
                 Spacer()
                 Button("완료") {
                     viewModel.refreshScripts()
-                    presentationMode.wrappedValue.dismiss()
+                    dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
                 .controlSize(.large)

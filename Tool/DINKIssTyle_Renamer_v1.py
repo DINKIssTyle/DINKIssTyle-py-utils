@@ -1,3 +1,5 @@
+#pqr cat "Tool"
+#pqr terminal true
 import sys
 import os
 from pathlib import Path
