@@ -1,0 +1,5 @@
+PySide6
+rembg
+pillow
+requests
+onnxruntime

@@ -1,3 +1,4 @@
+#pqr cat "Video"
 # pip install PySide6 Pillow numpy
 
 import sys
