@@ -21,7 +21,7 @@ if %errorlevel% neq 0 goto :NoGCC
 echo [DEBUG] GCC Version:
 gcc --version
 
-:: 3. Check for Fyne
+:: 3. Check for Fyne (New Tool)
 where fyne >nul 2>nul
 if %errorlevel% neq 0 goto :InstallFyne
 
@@ -30,20 +30,16 @@ echo.
 echo [INFO] Tidying dependencies...
 go mod tidy
 
-:: 4. Build Test (Native Arch)
-:: Clearing GOARCH to let Go detect the system's native architecture.
-set GOOS=windows
-set GOARCH=
-
+:: 4. Build Native (Debug)
 echo.
-echo [INFO] Running compilation check (go build)...
-go build -v -o %APP_NAME%.exe .
+echo [INFO] Building Native Executable (PyQuickBox_Native.exe)...
+go build -o %APP_NAME%_Native.exe .
 
 if %errorlevel% neq 0 goto :Fail
 
+:: 5. Package with Fyne
 echo.
-echo [INFO] Packaging with Fyne (Adding Icon)...
-:: Overwrite the test executable with the packaged one
+echo [INFO] Packaging with Fyne (PyQuickBox.exe)...
 fyne package -os windows -icon %ICON% -name %APP_NAME% -appID %APP_ID%
 
 if %errorlevel% equ 0 goto :Success
@@ -51,38 +47,39 @@ goto :Fail
 
 :NoGo
 echo.
-echo [ERROR] Go is not installed or not in PATH.
+echo [ERROR] Go is not installed.
 pause
 exit /b 1
 
 :NoGCC
 echo.
-echo [ERROR] GCC Compiler is NOT found.
-echo Fyne requires a C compiler on Windows (MinGW or TDM-GCC).
-echo Please install TDM-GCC from: https://jmeubank.github.io/tdm-gcc/
+echo [ERROR] GCC is not installed.
 pause
 exit /b 1
 
 :InstallFyne
 echo.
-echo [INFO] Fyne CLI not found. Installing...
-go install fyne.io/fyne/v2/cmd/fyne@latest
+echo [INFO] Installing NEW Fyne Tool (fyne.io/tools/cmd/fyne)...
+:: Using the new CLI path
+go install fyne.io/tools/cmd/fyne@latest
 set "PATH=%PATH%;%USERPROFILE%\go\bin"
 goto :Build
 
 :Success
 echo.
 echo ----------------------------------------
-echo [SUCCESS] Build Complete: %APP_NAME%.exe
+echo [SUCCESS] Build Complete!
+echo You have TWO files:
+echo 1. PyQuickBox_Native.exe (Pure Go Build)
+echo 2. PyQuickBox.exe (Fyne Packaged with Icon)
+echo.
+echo Please try running #1 first. If that works, try #2.
 echo ----------------------------------------
 pause
 exit /b 0
 
 :Fail
 echo.
-echo [FAILURE] Build Failed. See errors above.
-echo Common Fixes:
-echo 1. Ensure Go and GCC are both 64-bit (or both 32-bit).
-echo 2. Re-install TDM-GCC (64-bit recommended).
+echo [FAILURE] Build Failed.
 pause
 exit /b 1
