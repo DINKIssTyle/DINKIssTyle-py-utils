@@ -1,3 +1,5 @@
+//go:build ignore
+
 package main
 
 import (
@@ -5,7 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"image"
-	"image/png"
+	_ "image/png"
 	"io"
 	"os"
 )
