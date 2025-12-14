@@ -107,8 +107,64 @@ func main() {
 	// 4. 초기 스캔
 	launcher.refreshScripts()
 
+	// 5. 드래그 앤 드롭 핸들러
+	myWindow.SetOnDropped(func(pos fyne.Position, uris []fyne.URI) {
+		launcher.handleDrops(uris)
+	})
+
 	myWindow.Resize(fyne.NewSize(800, 600))
 	myWindow.ShowAndRun()
+}
+
+// --- Drag & Drop Handler ---
+func (l *LauncherApp) handleDrops(uris []fyne.URI) {
+	for _, uri := range uris {
+		path := uri.Path()
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+
+		if info.IsDir() {
+			// 폴더 드롭: 등록 여부 확인
+			exists := false
+			for _, f := range l.RegisteredFolders {
+				if f == path {
+					exists = true
+					break
+				}
+			}
+			if !exists {
+				dialog.ShowConfirm("Add Folder", fmt.Sprintf("Add '%s' to registered folders?", filepath.Base(path)), func(ok bool) {
+					if ok {
+						l.RegisteredFolders = append(l.RegisteredFolders, path)
+						l.savePreferences()
+						l.refreshScripts()
+						// 설정 다이얼로그가 열려있다면 갱신이 필요하겠지만, 여기서는 메인 UI 갱신이면 충분
+					}
+				}, l.Window)
+			}
+		} else {
+			// 파일 드롭: .py 확인
+			if filepath.Ext(path) == ".py" {
+				// 임시 ScriptItem 생성 및 실행
+				// 파싱하여 기존 헤더 설정 확인
+				cat, iMac, iWin, iUbu, term, iDef := l.parseHeader(path)
+
+				item := ScriptItem{
+					Name:          strings.TrimSuffix(filepath.Base(path), ".py"),
+					Path:          path,
+					Category:      cat,
+					InterpMac:     iMac,
+					InterpWin:     iWin,
+					InterpUbuntu:  iUbu,
+					Terminal:      term,
+					InterpDefault: iDef,
+				}
+				l.runScript(item)
+			}
+		}
+	}
 }
 
 // --- UI 구성 ---
@@ -662,6 +718,68 @@ func (l *LauncherApp) openFileLocationLinux(dir string) {
 	exec.Command("xdg-open", dir).Start()
 }
 
+// --- Desktop Entry Helpers (Linux only) ---
+func (l *LauncherApp) createDesktopShortcut() {
+	if runtime.GOOS != "linux" {
+		return
+	}
+
+	homeDir, _ := os.UserHomeDir()
+	appDir := filepath.Join(homeDir, ".local", "share", "applications")
+	os.MkdirAll(appDir, 0755)
+
+	exePath, err := os.Executable()
+	if err != nil {
+		dialog.ShowError(err, l.Window)
+		return
+	}
+	exePath, _ = filepath.Abs(exePath)
+
+	// Icon handling: We need to extract the icon to a file since .desktop needs a path
+	iconPath := filepath.Join(homeDir, ".local", "share", "icons", "pyquickbox.png")
+	os.MkdirAll(filepath.Dir(iconPath), 0755)
+
+	// Save bundled icon to file
+	// Note: resourceIconPng is bundled via fyne bundle
+	err = ioutil.WriteFile(iconPath, resourceIconPng.Content(), 0644)
+	if err != nil {
+		fmt.Println("Warning: Could not write icon file:", err)
+	}
+
+	desktopContent := fmt.Sprintf(`[Desktop Entry]
+Type=Application
+Name=PyQuickBox
+Comment=Python Script Launcher
+Exec=%s
+Icon=%s
+Terminal=false
+Categories=Utility;Development;
+`, exePath, iconPath)
+
+	desktopPath := filepath.Join(appDir, "pyquickbox.desktop")
+	err = ioutil.WriteFile(desktopPath, []byte(desktopContent), 0644)
+	if err != nil {
+		dialog.ShowError(err, l.Window)
+	} else {
+		dialog.ShowInformation("Success", "Desktop shortcut created!", l.Window)
+	}
+}
+
+func (l *LauncherApp) removeDesktopShortcut() {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	homeDir, _ := os.UserHomeDir()
+	desktopPath := filepath.Join(homeDir, ".local", "share", "applications", "pyquickbox.desktop")
+
+	err := os.Remove(desktopPath)
+	if err != nil && !os.IsNotExist(err) {
+		dialog.ShowError(err, l.Window)
+	} else {
+		dialog.ShowInformation("Success", "Desktop shortcut removed!", l.Window)
+	}
+}
+
 // --- 설정 및 데이터 관리 ---
 func (l *LauncherApp) loadPreferences() {
 	l.DefaultPythonPath = l.App.Preferences().StringWithFallback(KeyPythonPath, "/usr/bin/python3")
@@ -708,6 +826,22 @@ func (l *LauncherApp) showSettingsDialog() {
 	}
 
 	fontContainer := container.NewBorder(nil, nil, nil, fontLabel, fontSlider)
+
+	// Linux Desktop Shortcut Buttons
+	var linuxShortcutBox *fyne.Container
+	if runtime.GOOS == "linux" {
+		createBtn := widget.NewButton("Create Desktop Shortcut", func() {
+			l.createDesktopShortcut()
+		})
+		removeBtn := widget.NewButton("Remove Desktop Shortcut", func() {
+			l.removeDesktopShortcut()
+		})
+		linuxShortcutBox = container.NewVBox(
+			widget.NewLabelWithStyle("Desktop Shortcut (Ubuntu):", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			container.NewGridWithColumns(2, createBtn, removeBtn),
+			widget.NewSeparator(),
+		)
+	}
 
 	// 폴더 리스트
 	folderList := widget.NewList(
@@ -757,17 +891,26 @@ func (l *LauncherApp) showSettingsDialog() {
 	})
 
 	// 다이얼로그 내용 구성
-	content := container.NewVBox(
+	settingsItems := []fyne.CanvasObject{
 		widget.NewLabelWithStyle("Default Python Path:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		container.NewBorder(nil, nil, nil, pythonBtn, pythonEntry),
 		widget.NewSeparator(),
 		widget.NewLabelWithStyle("Label Font Size:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		fontContainer,
 		widget.NewSeparator(),
+	}
+
+	if linuxShortcutBox != nil {
+		settingsItems = append(settingsItems, linuxShortcutBox)
+	}
+
+	settingsItems = append(settingsItems,
 		widget.NewLabelWithStyle("Registered Folders:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		addFolderBtn,
 		folderScroll,
 	)
+
+	content := container.NewVBox(settingsItems...)
 
 	d := dialog.NewCustom("Settings", "Close", content, l.Window)
 	d.Resize(fyne.NewSize(500, 600))
