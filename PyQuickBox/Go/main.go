@@ -87,7 +87,7 @@ type LauncherApp struct {
 }
 
 func main() {
-	myApp := app.NewWithID("com.pyquickbox.linux")
+	myApp := app.NewWithID("com.dinkisstyle.pyquickbox")
 
 	// Apply Global UI Scale from Preferences (Default 0.9)
 	uiScale := myApp.Preferences().FloatWithFallback("UIScale", 0.9)
@@ -109,6 +109,20 @@ func main() {
 	launcher.loadPreferences()
 	launcher.applyTheme(launcher.ThemeMode)
 
+	// --- File Association & Open Handling ---
+	// macOS "Open With" / Docker Drag
+	/*
+	if desk, ok := myApp.(desktop.App); ok {
+		desk.SetOnOpened(func(uc fyne.URIReadCloser) {
+			if uc == nil {
+				return
+			}
+			path := uc.URI().Path()
+			launcher.runScriptFromPath(path)
+		})
+	}
+	*/
+
 	// 2. 파일 감지기 시작
 	watcher, err := fsnotify.NewWatcher()
 	if err == nil {
@@ -121,6 +135,19 @@ func main() {
 
 	// 4. 초기 스캔
 	launcher.refreshScripts()
+	
+	// Process CLI args (Windows/Linux)
+	if len(os.Args) > 1 {
+		// execute in goroutine to allow UI execution? 
+		// Actually runScriptFromPath uses exec.Command which is mostly async or blocking?
+		// runScript returns *exec.Cmd, it starts it.
+		// Let's iterate args.
+		for _, arg := range os.Args[1:] {
+			if strings.HasSuffix(arg, ".py") {
+				launcher.runScriptFromPath(arg)
+			}
+		}
+	}
 
 	// 5. 드래그 앤 드롭 핸들러
 	myWindow.SetOnDropped(func(pos fyne.Position, uris []fyne.URI) {
@@ -651,7 +678,7 @@ func (l *LauncherApp) refreshScripts() {
 }
 
 // --- 로직: 실행 ---
-func (l *LauncherApp) runScript(s ScriptItem) {
+func (l *LauncherApp) runScript(s ScriptItem) *exec.Cmd {
 	var python string
 
 	// OS별 인터프리터 선택
@@ -716,6 +743,7 @@ func (l *LauncherApp) runScript(s ScriptItem) {
 			dialog.ShowError(err, l.Window)
 		}
 	}()
+	return cmd
 }
 
 func (l *LauncherApp) createTerminalCommand(python, scriptPath string) *exec.Cmd {
@@ -775,12 +803,36 @@ func (l *LauncherApp) openFileLocationLinux(dir string) {
 		path, err := exec.LookPath(fm)
 		if err == nil && path != "" {
 			exec.Command(fm, dir).Start()
-			return
 		}
 	}
 
 	// 2. Fallback to xdg-open if nothing else works
 	exec.Command("xdg-open", dir).Start()
+}
+
+// --- 임의 경로 스크립트 실행 ---
+func (l *LauncherApp) runScriptFromPath(path string) {
+	// 1. Parse Metadata
+	cat, iMac, iWin, iUbu, term, iDef := l.parseHeader(path)
+	
+	// 2. Create Temp ScriptItem
+	item := ScriptItem{
+		Name:          strings.TrimSuffix(filepath.Base(path), ".py"),
+		Path:          path,
+		Category:      cat,
+		InterpMac:     iMac,
+		InterpWin:     iWin,
+		InterpUbuntu:  iUbu,
+		Terminal:      term,
+		InterpDefault: iDef,
+	}
+	
+	// 3. Run
+	cmd := l.runScript(item)
+	if cmd != nil {
+		// Log or Notify?
+		fmt.Println("Launched external file:", path)
+	}
 }
 
 // --- Desktop Entry Helpers (Linux only) ---
@@ -801,7 +853,7 @@ func (l *LauncherApp) createDesktopShortcut() {
 	exePath, _ = filepath.Abs(exePath)
 
 	// Icon handling: We need to extract the icon to a file since .desktop needs a path
-	iconPath := filepath.Join(homeDir, ".local", "share", "icons", "pyquickbox.png")
+	iconPath := filepath.Join(homeDir, ".local", "share", "icons", "PyQuickBox.png")
 	os.MkdirAll(filepath.Dir(iconPath), 0755)
 
 	// Save bundled icon to file
@@ -815,18 +867,21 @@ func (l *LauncherApp) createDesktopShortcut() {
 Type=Application
 Name=PyQuickBox
 Comment=Python Script Launcher
-Exec=%s
+Exec=%s %%f
 Icon=%s
 Terminal=false
 Categories=Utility;Development;
+MimeType=text/x-python;
 `, exePath, iconPath)
 
-	desktopPath := filepath.Join(appDir, "pyquickbox.desktop")
+	desktopPath := filepath.Join(appDir, "PyQuickBox.desktop")
 	err = ioutil.WriteFile(desktopPath, []byte(desktopContent), 0644)
 	if err != nil {
 		dialog.ShowError(err, l.Window)
 	} else {
-		dialog.ShowInformation("Success", "Desktop shortcut created!", l.Window)
+		// Update DB
+		exec.Command("update-desktop-database", appDir).Run()
+		dialog.ShowInformation("Success", "Desktop shortcut & File association created!", l.Window)
 	}
 }
 
@@ -835,7 +890,7 @@ func (l *LauncherApp) removeDesktopShortcut() {
 		return
 	}
 	homeDir, _ := os.UserHomeDir()
-	desktopPath := filepath.Join(homeDir, ".local", "share", "applications", "pyquickbox.desktop")
+	desktopPath := filepath.Join(homeDir, ".local", "share", "applications", "PyQuickBox.desktop")
 
 	err := os.Remove(desktopPath)
 	if err != nil && !os.IsNotExist(err) {
@@ -843,6 +898,44 @@ func (l *LauncherApp) removeDesktopShortcut() {
 	} else {
 		dialog.ShowInformation("Success", "Desktop shortcut removed!", l.Window)
 	}
+}
+
+// --- Windows Registry Helpers ---
+func (l *LauncherApp) registerWindowsAssociation() {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	
+	exePath, err := os.Executable()
+	if err != nil {
+		dialog.ShowError(err, l.Window)
+		return
+	}
+	exePath, _ = filepath.Abs(exePath)
+	
+	// Format: "C:\Path\To\App.exe" "%1"
+	cmdVal := fmt.Sprintf(`"%s" "%%1"`, exePath)
+
+	// 1. HKCU\Software\Classes\.py (Associate .py with ProgID)
+	// Note: Use a custom ProgID to avoid messing with system python default unrecoverably?
+	// Better: PyQuickBox.PythonScript
+	
+	// We use "reg" command for simplicity
+	cmds := [][]string{
+		{"add", `HKCU\Software\Classes\.py`, "/ve", "/d", "PyQuickBox.PythonScript", "/f"},
+		{"add", `HKCU\Software\Classes\PyQuickBox.PythonScript`, "/ve", "/d", "Python Script", "/f"},
+		{"add", `HKCU\Software\Classes\PyQuickBox.PythonScript\shell\open\command`, "/ve", "/d", cmdVal, "/f"},
+	}
+	
+	for _, args := range cmds {
+		err := exec.Command("reg", args...).Run()
+		if err != nil {
+			dialog.ShowError(fmt.Errorf("Registry Error: %v\nArgs: %v", err, args), l.Window)
+			return
+		}
+	}
+	
+	dialog.ShowInformation("Success", "Registered .py file association!\n(You may need to restart Explorer or choose PyQuickBox from 'Open With')", l.Window)
 }
 
 // --- 설정 및 데이터 관리 ---
@@ -909,15 +1002,28 @@ func (l *LauncherApp) showSettingsDialog() {
 	// Linux Desktop Shortcut Buttons
 	var linuxShortcutBox *fyne.Container
 	if runtime.GOOS == "linux" {
-		createBtn := widget.NewButton("Create Desktop Shortcut", func() {
+		createBtn := widget.NewButton("Create Shortcut & Associate .py", func() {
 			l.createDesktopShortcut()
 		})
-		removeBtn := widget.NewButton("Remove Desktop Shortcut", func() {
+		removeBtn := widget.NewButton("Remove Shortcut", func() {
 			l.removeDesktopShortcut()
 		})
 		linuxShortcutBox = container.NewVBox(
-			widget.NewLabelWithStyle("Desktop Shortcut (Ubuntu):", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			widget.NewLabelWithStyle("Desktop Integration:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 			container.NewGridWithColumns(2, createBtn, removeBtn),
+			widget.NewSeparator(),
+		)
+	}
+	
+	// Windows Association Button
+	var winAssocBox *fyne.Container
+	if runtime.GOOS == "windows" {
+		regBtn := widget.NewButton("Register .py Association", func() {
+			l.registerWindowsAssociation()
+		})
+		winAssocBox = container.NewVBox(
+			widget.NewLabelWithStyle("Windows Integration:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			regBtn,
 			widget.NewSeparator(),
 		)
 	}
@@ -1010,6 +1116,9 @@ func (l *LauncherApp) showSettingsDialog() {
 
 	if linuxShortcutBox != nil {
 		settingsItems = append(settingsItems, linuxShortcutBox)
+	}
+	if winAssocBox != nil {
+		settingsItems = append(settingsItems, winAssocBox)
 	}
 
 	settingsItems = append(settingsItems,

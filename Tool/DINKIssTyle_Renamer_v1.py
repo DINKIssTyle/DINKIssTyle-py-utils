@@ -1,4 +1,4 @@
-#pqr cat "Tool"
+#pqr cat=Tool
 import sys
 import os
 from pathlib import Path
