@@ -28,15 +28,15 @@ import (
 
 // --- 데이터 모델 ---
 type ScriptItem struct {
-	Name            string
-	Path            string
-	Category        string
-	IconPath        string
-	InterpDefault   string // #pqr ... (Legacy or fallback)
-	InterpMac       string // #pqr mac
-	InterpWin       string // #pqr win
-	InterpUbuntu    string // #pqr ubuntu
-	Terminal        bool   // #pqr terminal true
+	Name          string
+	Path          string
+	Category      string
+	IconPath      string
+	InterpDefault string // #pqr ... (Legacy or fallback)
+	InterpMac     string // #pqr mac
+	InterpWin     string // #pqr win
+	InterpUbuntu  string // #pqr ubuntu
+	Terminal      bool   // #pqr terminal true
 }
 
 // --- 앱 설정 키 ---
@@ -80,6 +80,7 @@ type LauncherApp struct {
 
 func main() {
 	myApp := app.NewWithID("com.pyquickbox.linux")
+	myApp.SetIcon(resourceIconPng)
 	myWindow := myApp.NewWindow("PyQuickBox v1.0.0")
 
 	launcher := &LauncherApp{
@@ -119,30 +120,69 @@ func (l *LauncherApp) setupUI() {
 			return 1 + len(l.Categories)
 		},
 		func() fyne.CanvasObject {
-			return container.NewHBox(widget.NewIcon(theme.FolderIcon()), widget.NewLabel("Template"))
+			// Template Item
+			// Use canvas.Image instead of widget.Icon to support SetMinSize
+			icon := canvas.NewImageFromResource(theme.FolderIcon())
+			icon.FillMode = canvas.ImageFillContain
+
+			// Use canvas.Text for dynamic sizing
+			label := canvas.NewText("Template", theme.ForegroundColor())
+			label.Alignment = fyne.TextAlignLeading
+
+			// Layout: Border (Left=Icon, Center=Label)
+			borderLayout := container.NewBorder(nil, nil, icon, nil, label)
+
+			// Add Padding
+			return container.NewPadded(borderLayout)
 		},
 		func(i widget.ListItemID, o fyne.CanvasObject) {
-			hbox := o.(*fyne.Container)
-			icon := hbox.Objects[0].(*widget.Icon)
-			label := hbox.Objects[1].(*widget.Label)
+			// Object Hierarchy: Padded -> Border -> (Icon, Label)
+			padded := o.(*fyne.Container)
+			border := padded.Objects[0].(*fyne.Container)
 
-			if i == 0 { // Item: All Apps
-				icon.SetResource(theme.GridIcon())
-				label.SetText("All Apps")
-				label.TextStyle = fyne.TextStyle{Bold: true} // Make All Apps bold for distinction
+			var icon *canvas.Image
+			var label *canvas.Text
+
+			// Find components
+			for _, obj := range border.Objects {
+				if img, ok := obj.(*canvas.Image); ok {
+					icon = img
+				} else if lbl, ok := obj.(*canvas.Text); ok {
+					label = lbl
+				}
+			}
+
+			if icon == nil || label == nil {
 				return
 			}
-			
-			// Categories
-			catIndex := i - 1
-			if catIndex >= 0 && catIndex < len(l.Categories) {
-				icon.SetResource(theme.FolderIcon())
-				label.SetText(l.Categories[catIndex])
-				label.TextStyle = fyne.TextStyle{}
+
+			// Dynamic Sizing
+			// Base icon size on Font Size (e.g. 1.5x)
+			scaledSize := float32(l.FontSize * 1.5)
+			icon.SetMinSize(fyne.NewSize(scaledSize, scaledSize))
+
+			// Update Label
+			label.TextSize = l.FontSize
+			label.Color = theme.ForegroundColor() // Ensure theme update
+
+			if i == 0 { // Item: All Apps
+				icon.Resource = theme.GridIcon()
+				label.Text = "All Apps"
+				label.TextStyle = fyne.TextStyle{Bold: true}
+			} else {
+				// Categories
+				catIndex := i - 1
+				if catIndex >= 0 && catIndex < len(l.Categories) {
+					icon.Resource = theme.FolderIcon()
+					label.Text = l.Categories[catIndex]
+					label.TextStyle = fyne.TextStyle{}
+				}
 			}
+			label.Refresh()
+			icon.Refresh() // Important to render new resource/size
 		},
 	)
-	
+
 	l.Sidebar.OnSelected = func(id widget.ListItemID) {
 		if id == 0 {
 			l.CurrentCategory = "All"
@@ -170,7 +210,7 @@ func (l *LauncherApp) setupUI() {
 	}
 	// 검색창 크기 고정 (GridWrap 사용)
 	searchContainer := container.NewGridWrap(fyne.NewSize(200, 34), l.SearchEntry)
-	
+
 	// 슬라이더 (최소값 32로 변경)
 	iconSlider := widget.NewSlider(32, 200)
 	iconSlider.Value = float64(l.IconSize)
@@ -181,14 +221,14 @@ func (l *LauncherApp) setupUI() {
 		}
 		l.IconSize = float32(f)
 		l.App.Preferences().SetFloat(KeyIconSize, float64(l.IconSize))
-		
+
 		debounceTimer = time.AfterFunc(150*time.Millisecond, func() {
 			l.updateGridUI()
 		})
 	}
 	// 슬라이더 크기 고정
 	sliderContainer := container.NewGridWrap(fyne.NewSize(150, 34), iconSlider)
-	
+
 	settingsBtn := widget.NewButtonWithIcon("", theme.SettingsIcon(), func() {
 		l.showSettingsDialog()
 	})
@@ -198,24 +238,24 @@ func (l *LauncherApp) setupUI() {
 		sliderContainer,
 		settingsBtn,
 	)
-	
+
 	// titleLabel Removed
 	// Search Bar moved to Left
 	topLeftControls := container.NewHBox(toggleBtn, searchContainer)
-	
+
 	l.TopBar = container.NewBorder(nil, nil, topLeftControls, topRightControls)
 
 	// 3. Main Content (우측)
 	l.ContentBox = container.NewVBox()
 	scrollArea := container.NewVScroll(l.ContentBox)
-	
+
 	l.MainContent = container.NewBorder(container.NewPadded(l.TopBar), nil, nil, nil, container.NewPadded(scrollArea))
 
 	// 4. 초기 상태 설정 및 레이아웃 적용
 	l.CurrentCategory = "All"
 	l.SidebarVisible = true
 	l.Sidebar.Select(0)
-	
+
 	l.refreshLayout()
 }
 
@@ -276,11 +316,11 @@ func (l *LauncherApp) updateGridUI() {
 	// 2줄만 허용하므로 높이를 최적화 (Font Size * 2.8)
 	// 약 2줄 높이 + 약간의 여유
 	textHeight := float32(l.FontSize) * 2.8
-	
+
 	// 아이콘 간격 넓히기: 아이콘 크기 + 40 (좌우 여백)
 	itemWidth := l.IconSize + 40
 	itemHeight := l.IconSize + textHeight + 10 // 아이콘 + 텍스트 + 여백 (줄임)
-	
+
 	itemSize := fyne.NewSize(itemWidth, itemHeight)
 	grid := container.NewGridWrap(itemSize)
 
@@ -465,13 +505,13 @@ func (l *LauncherApp) parseHeader(path string) (string, string, string, string, 
 		}
 
 		// Legacy: #pqr linux ... or simple #pqr "Cat" "Interp"
-		if strings.HasPrefix(line, "#pqr") && 
+		if strings.HasPrefix(line, "#pqr") &&
 			!strings.HasPrefix(line, "#pqr cat") &&
 			!strings.HasPrefix(line, "#pqr mac") &&
 			!strings.HasPrefix(line, "#pqr win") &&
 			!strings.HasPrefix(line, "#pqr ubuntu") &&
 			!strings.HasPrefix(line, "#pqr terminal") {
-			
+
 			re := regexp.MustCompile(`#pqr\s+\w+.*"([^"]+)"\s*(.*)`)
 			matches := re.FindStringSubmatch(line)
 			if len(matches) > 1 {
@@ -527,14 +567,14 @@ func (l *LauncherApp) runScript(s ScriptItem) {
 
 	fmt.Printf("Run Code: %s / Path: %s\n", s.Name, python)
 
-	// 터미널 실행 여부 (단순 구현: 터미널을 열어서 실행하는 것은 OS별로 복잡하므로, 
+	// 터미널 실행 여부 (단순 구현: 터미널을 열어서 실행하는 것은 OS별로 복잡하므로,
 	// 여기서는 터미널 플래그가 있으면 xterm 등을 사용하는 식으로 확장이 가능하나,
 	// 일단 로그만 찍고 기본 실행으로 유지하되, 필요시 확장)
 	// Mac의 경우 'open -a Terminal script' 식이나
 	// Windows의 경우 'cmd /k ...' 식의 처리가 필요.
 	// 사용자 요청은 단순히 "Terminal 창 켤지 여부" 이므로
 	// 간단히 구현 시도:
-	
+
 	var cmd *exec.Cmd
 
 	if s.Terminal {
@@ -568,11 +608,11 @@ func (l *LauncherApp) createTerminalCommand(python, scriptPath string) *exec.Cmd
 		// 대안: 새 창을 띄우는 open -a Terminal 사용 (인자 전달의 어려움 있음)
 		// 여기서는 "open"을 사용하여 기본 연결된 프로그램으로 열거나,
 		// apple script로 do script ... 수행.
-		
+
 		// 간단한 접근:
 		script := fmt.Sprintf(`tell application "Terminal" to do script "%s %s"`, python, scriptPath)
 		return exec.Command("osascript", "-e", script)
-		
+
 	case "windows":
 		// cmd /k "python script.py"
 		return exec.Command("cmd", "/C", "start", "cmd", "/k", python, scriptPath)
@@ -585,6 +625,7 @@ func (l *LauncherApp) createTerminalCommand(python, scriptPath string) *exec.Cmd
 }
 
 // 파일 위치 열기
+// 파일 위치 열기
 func (l *LauncherApp) openFileLocation(s ScriptItem) {
 	dir := filepath.Dir(s.Path)
 	switch runtime.GOOS {
@@ -593,8 +634,32 @@ func (l *LauncherApp) openFileLocation(s ScriptItem) {
 	case "windows":
 		exec.Command("explorer", dir).Start()
 	case "linux":
-		exec.Command("xdg-open", dir).Start()
+		l.openFileLocationLinux(dir)
 	}
+}
+
+func (l *LauncherApp) openFileLocationLinux(dir string) {
+	// 1. Try common file managers explicitly
+	// VS Code often hijacks xdg-open, so we prefer specific file managers.
+	fileManagers := []string{
+		"nautilus", // GNOME
+		"dolphin",  // KDE
+		"nemo",     // Cinnamon
+		"caja",     // MATE
+		"thunar",   // XFCE
+		"pcmanfm",  // LXDE
+	}
+
+	for _, fm := range fileManagers {
+		path, err := exec.LookPath(fm)
+		if err == nil && path != "" {
+			exec.Command(fm, dir).Start()
+			return
+		}
+	}
+
+	// 2. Fallback to xdg-open if nothing else works
+	exec.Command("xdg-open", dir).Start()
 }
 
 // --- 설정 및 데이터 관리 ---
@@ -641,7 +706,7 @@ func (l *LauncherApp) showSettingsDialog() {
 		l.FontSize = float32(f)
 		fontLabel.SetText(fmt.Sprintf("%.0f", f))
 	}
-	
+
 	fontContainer := container.NewBorder(nil, nil, nil, fontLabel, fontSlider)
 
 	// 폴더 리스트
@@ -723,7 +788,7 @@ func (l *LauncherApp) showPropertiesDialog(s ScriptItem) {
 
 	catEntry := widget.NewEntry()
 	catEntry.SetText(s.Category)
-	
+
 	// OS별 인터프리터 설정
 	macEntry := widget.NewEntry()
 	macEntry.SetPlaceHolder("Path to python/sh (Mac)")
@@ -736,7 +801,7 @@ func (l *LauncherApp) showPropertiesDialog(s ScriptItem) {
 	ubuEntry := widget.NewEntry()
 	ubuEntry.SetPlaceHolder("Path to python/sh (Ubuntu)")
 	ubuEntry.SetText(s.InterpUbuntu)
-	
+
 	termCheck := widget.NewCheck("Run in Terminal", nil)
 	termCheck.Checked = s.Terminal
 
@@ -757,11 +822,11 @@ func (l *LauncherApp) showPropertiesDialog(s ScriptItem) {
 	// d를 나중에 할당하면 클로저에서 nil panic 가능성?
 	// 하지만 showPropertiesDialog 함수 내에서는 d가 생성된 후 콜백이 실행되므로 괜찮음.
 	// 하지만 d.Hide()를 호출하려면 d가 필요함.
-	
+
 	// 해결책: 커스텀 다이얼로그 구조체 사용하지 않고, 컨텐츠에 버튼 포함하여 NewCustom 호출.
 	// d 변수를 먼저 선언.
 	var d dialog.Dialog
-	
+
 	saveBtn := widget.NewButton("Save", func() {
 		l.updateScriptMetadata(s, catEntry.Text, macEntry.Text, winEntry.Text, ubuEntry.Text, termCheck.Checked)
 		l.refreshScripts()
@@ -776,7 +841,7 @@ func (l *LauncherApp) showPropertiesDialog(s ScriptItem) {
 	})
 
 	contentWithButtons := container.NewBorder(nil, container.NewHBox(saveBtn, cancelBtn), nil, nil, content)
-	
+
 	d = dialog.NewCustom("Properties", "Close", contentWithButtons, l.Window)
 	d.Resize(fyne.NewSize(400, 400))
 	d.Show()
@@ -789,29 +854,37 @@ func (l *LauncherApp) updateScriptMetadata(s ScriptItem, cat, mac, win, ubu stri
 		dialog.ShowError(err, l.Window)
 		return
 	}
-	
+
 	lines := strings.Split(string(content), "\n")
 	var newLines []string
-	
+
 	// Shebang 보존 확인
 	hasShebang := len(lines) > 0 && strings.HasPrefix(lines[0], "#!")
 	if hasShebang {
 		newLines = append(newLines, lines[0])
 	}
-	
+
 	// 새 태그 생성
 	newLines = append(newLines, fmt.Sprintf("#pqr cat \"%s\"", cat))
-	if mac != "" { newLines = append(newLines, fmt.Sprintf("#pqr mac \"%s\"", mac)) }
-	if win != "" { newLines = append(newLines, fmt.Sprintf("#pqr win \"%s\"", win)) }
-	if ubu != "" { newLines = append(newLines, fmt.Sprintf("#pqr ubuntu \"%s\"", ubu)) }
-	if term { newLines = append(newLines, "#pqr terminal true") }
-	
+	if mac != "" {
+		newLines = append(newLines, fmt.Sprintf("#pqr mac \"%s\"", mac))
+	}
+	if win != "" {
+		newLines = append(newLines, fmt.Sprintf("#pqr win \"%s\"", win))
+	}
+	if ubu != "" {
+		newLines = append(newLines, fmt.Sprintf("#pqr ubuntu \"%s\"", ubu))
+	}
+	if term {
+		newLines = append(newLines, "#pqr terminal true")
+	}
+
 	// 기존 내용 중 #pqr 태그 제거 (상단 20줄 이내)
 	for i, line := range lines {
 		if hasShebang && i == 0 {
 			continue
 		}
-		
+
 		isTag := false
 		if i < 30 { // 30줄까지만 검사
 			trim := strings.TrimSpace(line)
@@ -819,17 +892,16 @@ func (l *LauncherApp) updateScriptMetadata(s ScriptItem, cat, mac, win, ubu stri
 				isTag = true
 			}
 		}
-		
+
 		if !isTag {
 			newLines = append(newLines, line)
 		}
 	}
-	
+
 	err = ioutil.WriteFile(s.Path, []byte(strings.Join(newLines, "\n")), 0644)
 	if err != nil {
 		dialog.ShowError(err, l.Window)
 	}
-
 
 }
 
@@ -858,7 +930,7 @@ type ScriptWidget struct {
 	app  *LauncherApp
 
 	lastTap time.Time
-	
+
 	// UI Elements for manipulation
 	background *canvas.Rectangle
 	icon       *canvas.Image
@@ -871,10 +943,9 @@ func NewScriptWidget(item ScriptItem, app *LauncherApp) *ScriptWidget {
 }
 
 func (w *ScriptWidget) CreateRenderer() fyne.WidgetRenderer {
-	// 배경 (Hover 효과용)
-	w.background = canvas.NewRectangle(theme.HoverColor())
-	w.background.FillColor = color.Transparent
-	w.background.CornerRadius = 8 // 모던한 느낌을 위한 둥근 모서리
+	// 배경
+	w.background = canvas.NewRectangle(color.Transparent)
+	w.background.CornerRadius = 8
 
 	// 아이콘
 	if w.item.IconPath != "" {
@@ -882,53 +953,69 @@ func (w *ScriptWidget) CreateRenderer() fyne.WidgetRenderer {
 	} else {
 		w.icon = canvas.NewImageFromResource(theme.FileIcon())
 	}
-	// Aspect Ratio 고정 (매우 중요)
 	w.icon.FillMode = canvas.ImageFillContain
 	w.icon.SetMinSize(fyne.NewSize(w.app.IconSize, w.app.IconSize))
-	// 라벨 (RichText 사용 - 줄바꿈 지원)
-	// RichText does not support arbitrary float size in struct safely in all versions.
-	// But we can try to use standard size if float fails, or just rely on VBox layout.
-	// User REALLY wants spacing and wrapping.
-	// 라벨 (canvas.Text + Smart Wrapping)
-	// Custom Font Size를 지원하기 위해 canvas.Text 사용.
-	// 텍스트 래핑 헬퍼를 사용하여 줄별로 분리하고, 각 줄을 별도의 canvas.Text로 렌더링
-	// canvas.Text는 개행 문자(\n)를 지원하지 않아 "다이아몬드(?)" 문자가 발생하므로 분리 필수.
-	
-	lines := wrapSmart(w.item.Name, w.app.FontSize, w.app.IconSize+30) // Width 약간 여유
-	
+
+	// 텍스트 라인 생성
+	lines := wrapSmart(w.item.Name, w.app.FontSize, w.app.IconSize+30)
+
+	var labelTexts []*canvas.Text
 	labelVBox := container.NewVBox()
 	for _, line := range lines {
 		txt := canvas.NewText(line, theme.ForegroundColor())
 		txt.TextSize = w.app.FontSize
 		txt.Alignment = fyne.TextAlignCenter
 		labelVBox.Add(txt)
+		labelTexts = append(labelTexts, txt)
 	}
-	
-	// 레이아웃: Border (Icon=Top, Label=Center)
-	// Border Layout의 Top 영역은 컨텐츠의 MinSize만큼 우선 할당되므로
-	// 라벨이 길어져도 아이콘 영역을 침범하지 않음 (아이콘 찌그러짐 방지)
-	
-	// 아이콘 컨테이너: 높이 고정 (IconSize) -> 센터 정렬
-	// +20을 제거하고 정사각형을 강제함. Centering은 NewCenter가 담당.
+
 	iconContainer := container.NewGridWrap(fyne.NewSize(w.app.IconSize, w.app.IconSize), w.icon)
-	
-	// 라벨 컨테이너 (위에서 생성한 VBox 사용)
-	// Center 영역에 배치. VBox는 기본적으로 내용물만큼의 높이를 가짐.
-	// container.NewCenter(labelVBox)를 사용하여 수직/수평 중앙 정렬? 
-	// 아니면 그냥 labelVBox만 넣으면 Top align? (VBox packs from top)
-	
-	// Final Layout
+
 	mainLayout := container.NewBorder(
-		container.NewCenter(iconContainer), // Top
+		container.NewCenter(iconContainer),
 		nil, nil, nil,
-		labelVBox, // Center
+		labelVBox,
 	)
-	
-	// Full stack
+
 	content := container.NewMax(w.background, container.NewPadded(mainLayout))
-	
-	return widget.NewSimpleRenderer(content)
+
+	return &scriptWidgetRenderer{
+		w:          w,
+		content:    content,
+		labelTexts: labelTexts,
+	}
 }
+
+// --- Renderer Implementation ---
+type scriptWidgetRenderer struct {
+	w          *ScriptWidget
+	content    *fyne.Container
+	labelTexts []*canvas.Text
+}
+
+func (r *scriptWidgetRenderer) Layout(s fyne.Size) {
+	r.content.Resize(s)
+}
+
+func (r *scriptWidgetRenderer) MinSize() fyne.Size {
+	return r.content.MinSize()
+}
+
+func (r *scriptWidgetRenderer) Refresh() {
+	// 테마 변경 시 색상 업데이트
+	fg := theme.ForegroundColor()
+	for _, txt := range r.labelTexts {
+		txt.Color = fg
+		txt.TextSize = r.w.app.FontSize // 폰트 크기 변경도 반영
+	}
+	r.content.Refresh()
+}
+
+func (r *scriptWidgetRenderer) Objects() []fyne.CanvasObject {
+	return []fyne.CanvasObject{r.content}
+}
+
+func (r *scriptWidgetRenderer) Destroy() {}
 
 // Hoverable 인터페이스 구현
 func (w *ScriptWidget) MouseIn(*desktop.MouseEvent) {
@@ -956,11 +1043,11 @@ func (w *ScriptWidget) Tapped(e *fyne.PointEvent) {
 
 func (w *ScriptWidget) animateLaunch() {
 	// 펄스 애니메이션 (작아졌다 커짐)
-	
+
 	// Simple scale animation: Fyne doesn't support direct scale transform on all objects easily without custom layout,
 	// but we can animate opacity or simple sizing if layout permits.
 	// For immediate visual feedback, let's flash the background and fade the icon slightly.
-	
+
 	fade := fyne.NewAnimation(200*time.Millisecond, func(v float32) {
 		// v goes 0 -> 1
 		// Opacity: 1 -> 0.5 -> 1
@@ -970,7 +1057,7 @@ func (w *ScriptWidget) animateLaunch() {
 			w.icon.Translucency = float64(1 - v) // 0.5 -> 0 (fadein)
 		}
 		w.icon.Refresh()
-		
+
 		// Background flash
 		if v < 0.5 {
 			w.background.FillColor = theme.SelectionColor()
@@ -987,7 +1074,7 @@ func wrapSmart(text string, size float32, maxWidth float32) []string {
 	if text == "" {
 		return []string{}
 	}
-	
+
 	style := fyne.TextStyle{}
 	var lines []string
 	var currentLine string
@@ -995,7 +1082,7 @@ func wrapSmart(text string, size float32, maxWidth float32) []string {
 	// 1. 이미 줄바꿈이 있는 경우 처리? (일단 무시하고 one block으로 봄 or split)
 	// 단순화를 위해 전체를 run array로 변환하여 처리 (Character Wrap)
 	// 단어 단위 보존을 위해 먼저 Fields로 나누고, 너무 긴 단어는 쪼갭니다.
-	
+
 	words := strings.Fields(text)
 	for _, word := range words {
 		// 단어 자체가 maxWidth보다 긴 경우: 강제로 쪼개야 함
@@ -1005,7 +1092,7 @@ func wrapSmart(text string, size float32, maxWidth float32) []string {
 				lines = append(lines, currentLine)
 				currentLine = ""
 			}
-			
+
 			// 글자 단위로 쪼개서 넣기
 			runes := []rune(word)
 			chunk := ""
@@ -1027,7 +1114,7 @@ func wrapSmart(text string, size float32, maxWidth float32) []string {
 			if currentLine != "" {
 				testLine = currentLine + " " + word
 			}
-			
+
 			if fyne.MeasureText(testLine, size, style).Width <= maxWidth {
 				currentLine = testLine
 			} else {
@@ -1055,6 +1142,6 @@ func (w *ScriptWidget) TappedSecondary(e *fyne.PointEvent) {
 		fyne.NewMenuItem("Open Location", func() { w.app.openFileLocation(w.item) }),
 		fyne.NewMenuItem("Properties", func() { w.app.showPropertiesDialog(w.item) }),
 	)
-	
+
 	widget.ShowPopUpMenuAtPosition(menu, w.app.Window.Canvas(), e.AbsolutePosition)
 }
