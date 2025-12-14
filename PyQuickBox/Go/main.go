@@ -46,6 +46,8 @@ const (
 	KeyPythonPath        = "PythonPath"
 	KeyIconSize          = "IconSize"
 	KeyFontSize          = "FontSize"
+	KeyUIScale           = "UIScale"
+	KeyThemeMode         = "ThemeMode" // "dark", "light", "system"
 )
 
 // --- 메인 구조체 ---
@@ -66,6 +68,8 @@ type LauncherApp struct {
 	DefaultPythonPath string
 	IconSize          float32
 	FontSize          float32
+	UIScale           float32
+	ThemeMode         string // "dark", "light", "system"
 
 	// 검색
 	SearchText  string
@@ -84,6 +88,11 @@ type LauncherApp struct {
 
 func main() {
 	myApp := app.NewWithID("com.pyquickbox.linux")
+
+	// Apply Global UI Scale from Preferences (Default 0.9)
+	uiScale := myApp.Preferences().FloatWithFallback("UIScale", 0.9)
+	os.Setenv("FYNE_SCALE", fmt.Sprintf("%f", uiScale))
+
 	myApp.SetIcon(resourceIconPng)
 	myWindow := myApp.NewWindow("PyQuickBox v1.0.0")
 
@@ -93,10 +102,12 @@ func main() {
 		Scripts:  make(map[string][]ScriptItem),
 		IconSize: 80, // 기본값
 		FontSize: 12, // 기본값
+		UIScale:  float32(uiScale),
 	}
 
 	// 1. 설정 불러오기
 	launcher.loadPreferences()
+	launcher.applyTheme(launcher.ThemeMode)
 
 	// 2. 파일 감지기 시작
 	watcher, err := fsnotify.NewWatcher()
@@ -254,6 +265,43 @@ func (l *LauncherApp) parseHeader(filePath string) (category, interpMac, interpW
 	return
 }
 
+// 테마 적용
+func (l *LauncherApp) applyTheme(mode string) {
+	l.ThemeMode = mode
+	switch mode {
+	case "dark":
+		l.App.Settings().SetTheme(theme.DarkTheme())
+	case "light":
+		l.App.Settings().SetTheme(theme.LightTheme())
+	default: // system
+		l.App.Settings().SetTheme(theme.DefaultTheme())
+	}
+	l.savePreferences()
+}
+
+// --- 커스텀 버튼 (테마 메뉴용) ---
+type ThemeButton struct {
+	widget.Button
+	l *LauncherApp
+}
+
+func NewThemeButton(l *LauncherApp) *ThemeButton {
+	b := &ThemeButton{l: l}
+	b.Icon = theme.ColorPaletteIcon()
+	b.Importance = widget.MediumImportance
+	b.ExtendBaseWidget(b)
+	return b
+}
+
+func (b *ThemeButton) Tapped(e *fyne.PointEvent) {
+	menu := fyne.NewMenu("Theme",
+		fyne.NewMenuItem("Dark Mode", func() { b.l.applyTheme("dark") }),
+		fyne.NewMenuItem("Light Mode", func() { b.l.applyTheme("light") }),
+		fyne.NewMenuItem("System Default", func() { b.l.applyTheme("system") }),
+	)
+	widget.ShowPopUpMenuAtPosition(menu, b.l.Window.Canvas(), e.AbsolutePosition)
+}
+
 // --- UI 구성 ---
 func (l *LauncherApp) setupUI() {
 	// 1. Sidebar (좌측)
@@ -351,8 +399,11 @@ func (l *LauncherApp) setupUI() {
 		l.SearchText = s
 		l.updateGridUI()
 	}
-	// 검색창 크기 고정 (GridWrap 사용)
-	searchContainer := container.NewGridWrap(fyne.NewSize(200, 34), l.SearchEntry)
+	// 검색창 크기 고정 (GridWrap 대신 Stack+Spacer 사용)
+	// GridWrap이 의도치 않은 스크롤바/여백을 만들 수 있으므로 수정
+	searchSpacer := canvas.NewRectangle(color.Transparent)
+	searchSpacer.SetMinSize(fyne.NewSize(200, 34))
+	searchContainer := container.NewStack(searchSpacer, l.SearchEntry)
 
 	// 슬라이더 (최소값 32로 변경)
 	iconSlider := widget.NewSlider(32, 200)
@@ -376,9 +427,15 @@ func (l *LauncherApp) setupUI() {
 		l.showSettingsDialog()
 	})
 
+	// Theme Switcher Button
+	themeBtn := NewThemeButton(l)
+	// Button size: standard icon button
+	// ThemeButton extends Button, so we just use it directly
+
 	topRightControls := container.NewHBox(
 		// widget.NewIcon(theme.GridIcon()) Removed as requested
 		sliderContainer,
+		themeBtn,
 		settingsBtn,
 	)
 
@@ -388,11 +445,13 @@ func (l *LauncherApp) setupUI() {
 
 	l.TopBar = container.NewBorder(nil, nil, topLeftControls, topRightControls)
 
-	// 3. Main Content (우측)
+	// 3. Main Content (우측 -> Center Grid)
 	l.ContentBox = container.NewVBox()
 	scrollArea := container.NewVScroll(l.ContentBox)
 
-	l.MainContent = container.NewBorder(container.NewPadded(l.TopBar), nil, nil, nil, container.NewPadded(scrollArea))
+	// Previously l.MainContent wrapped TopBar. Now it only holds the Grid content.
+	// We wrap it in Padded for consistency
+	l.MainContent = container.NewPadded(scrollArea)
 
 	// 4. 초기 상태 설정 및 레이아웃 적용
 	l.CurrentCategory = "All"
@@ -402,17 +461,24 @@ func (l *LauncherApp) setupUI() {
 	l.refreshLayout()
 }
 
-// 레이아웃 갱신 (사이드바 토글 처리)
+// 레이아웃 갱신 (사이드바 토글 처리 + TopBar Fixed)
 func (l *LauncherApp) refreshLayout() {
+	var bodyContent fyne.CanvasObject
+
 	if l.SidebarVisible {
-		// Split Layout
+		// Split Layout: Sidebar | Grid
 		split := container.NewHSplit(l.Sidebar, l.MainContent)
 		split.Offset = 0.2 // 사이드바 비율 조정
-		l.Window.SetContent(split)
+		bodyContent = split
 	} else {
-		// Only Main Content
-		l.Window.SetContent(l.MainContent)
+		// Only Grid
+		bodyContent = l.MainContent
 	}
+
+	// TopBar is fixed at the top
+	// content := Top + Body
+	finalLayout := container.NewBorder(container.NewPadded(l.TopBar), nil, nil, nil, bodyContent)
+	l.Window.SetContent(finalLayout)
 }
 
 // --- 그리드 UI 갱신 (핵심) ---
@@ -784,6 +850,8 @@ func (l *LauncherApp) loadPreferences() {
 	l.DefaultPythonPath = l.App.Preferences().StringWithFallback(KeyPythonPath, "/usr/bin/python3")
 	l.IconSize = float32(l.App.Preferences().FloatWithFallback(KeyIconSize, 80))
 	l.FontSize = float32(l.App.Preferences().FloatWithFallback(KeyFontSize, 12))
+	l.UIScale = float32(l.App.Preferences().FloatWithFallback(KeyUIScale, 0.9))
+	l.ThemeMode = l.App.Preferences().StringWithFallback(KeyThemeMode, "system")
 
 	foldersJson := l.App.Preferences().String(KeyRegisteredFolders)
 	if foldersJson != "" {
@@ -795,6 +863,8 @@ func (l *LauncherApp) savePreferences() {
 	l.App.Preferences().SetString(KeyPythonPath, l.DefaultPythonPath)
 	l.App.Preferences().SetFloat(KeyIconSize, float64(l.IconSize))
 	l.App.Preferences().SetFloat(KeyFontSize, float64(l.FontSize))
+	l.App.Preferences().SetFloat(KeyUIScale, float64(l.UIScale))
+	l.App.Preferences().SetString(KeyThemeMode, l.ThemeMode)
 
 	data, _ := json.Marshal(l.RegisteredFolders)
 	l.App.Preferences().SetString(KeyRegisteredFolders, string(data))
@@ -912,11 +982,27 @@ func (l *LauncherApp) showSettingsDialog() {
 		}, w)
 	})
 
+	// Scale Control
+	scaleSlider := widget.NewSlider(0.5, 1.25)
+	scaleSlider.Step = 0.05
+	scaleSlider.Value = float64(l.UIScale)
+	scaleLabel := widget.NewLabel(fmt.Sprintf("%.2f", scaleSlider.Value))
+	scaleSlider.OnChanged = func(f float64) {
+		l.UIScale = float32(f)
+		scaleLabel.SetText(fmt.Sprintf("%.2f", f))
+	}
+	scaleContainer := container.NewBorder(nil, nil, nil, scaleLabel, scaleSlider)
+
 	// 다이얼로그 내용 구성
 	settingsItems := []fyne.CanvasObject{
 		widget.NewLabelWithStyle("Default Python Path:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		container.NewBorder(nil, nil, nil, pythonBtn, pythonEntry),
 		widget.NewSeparator(),
+
+		widget.NewLabelWithStyle("UI Scale (Restart Required):", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		scaleContainer,
+		widget.NewSeparator(),
+
 		widget.NewLabelWithStyle("Label Font Size:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		fontContainer,
 		widget.NewSeparator(),
@@ -936,7 +1022,16 @@ func (l *LauncherApp) showSettingsDialog() {
 	mainContent := container.NewVBox(settingsItems...)
 	scrollContainer := container.NewVScroll(container.NewPadded(mainContent))
 
-	w.SetContent(scrollContainer)
+	// Copyright Label (Docked at Bottom)
+	copyrightLabel := container.NewVBox(
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("(C) 2025 DINKI'ssTyle", fyne.TextAlignCenter, fyne.TextStyle{}),
+	)
+
+	// Layout: Scrollable Center + Fixed Bottom
+	finalLayout := container.NewBorder(nil, copyrightLabel, nil, nil, scrollContainer)
+
+	w.SetContent(finalLayout)
 	w.Resize(fyne.NewSize(500, 600))
 
 	w.SetOnClosed(func() {
