@@ -9,7 +9,7 @@ where fyne >nul 2>nul
 if %errorlevel% neq 0 (
     echo Fyne CLI not found. Installing...
     go install fyne.io/fyne/v2/cmd/fyne@latest
-    set PATH=%PATH%;%USERPROFILE%\go\bin
+    set "PATH=%PATH%;%USERPROFILE%\go\bin"
 )
 
 echo Packaging...
