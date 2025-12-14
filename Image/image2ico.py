@@ -1,3 +1,4 @@
+#pqr cat=Image; mac=; win=; linux=; term=false
 import sys
 import os
 from PIL import Image

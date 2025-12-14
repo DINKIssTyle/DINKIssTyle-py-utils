@@ -1,3 +1,4 @@
+#pqr cat=Tool; mac=; win=; linux=; term=false
 # -*- coding: utf-8 -*-
 import sys, os
 

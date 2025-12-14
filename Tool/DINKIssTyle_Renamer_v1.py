@@ -1,4 +1,4 @@
-#pqr cat=Tool
+#pqr cat=Tool; mac=; win=; linux=; term=false
 import sys
 import os
 from pathlib import Path
