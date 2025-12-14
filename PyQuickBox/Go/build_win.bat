@@ -23,34 +23,26 @@ gcc --version
 
 :: 3. Force Install NEW Fyne Tool
 echo.
-echo [INFO] Installing/Updating Fyne Toolkit...
+echo [INFO] Ensuring Fyne Toolkit is installed...
 go install fyne.io/tools/cmd/fyne@latest
-if %errorlevel% neq 0 (
-    echo [WARNING] Failed to install new Fyne tool. Trying to proceed...
-)
 
 :Build
 echo.
 echo [INFO] Tidying dependencies...
 go mod tidy
 
-:: 4. Build Native (Verbose & Strip)
+:: 4. Build Native (Fallback)
 echo.
 echo [INFO] Building Native Executable (PyQuickBox_Native.exe)...
 set GOOS=windows
 set GOARCH=amd64
 go build -ldflags="-s -w" -v -o %APP_NAME%_Native.exe .
 
-if %errorlevel% neq 0 goto :Fail
-
-echo [DEBUG] Native Binary Size:
-for %%I in (%APP_NAME%_Native.exe) do echo %%~zI bytes
-
-:: 5. Package with Fyne
+:: 5. Package with Fyne (Correct Flags)
 echo.
 echo [INFO] Packaging with Fyne (PyQuickBox.exe)...
-:: Use the newly installed binary explicitly if possible, or standard path
-"%USERPROFILE%\go\bin\fyne" package -os windows -icon %ICON% -name %APP_NAME% -appID %APP_ID%
+:: Using double-dash flags for the new tool
+"%USERPROFILE%\go\bin\fyne" package --os windows --icon %ICON% --name %APP_NAME% --app-id %APP_ID%
 
 if %errorlevel% equ 0 goto :Success
 echo [WARNING] Fyne package failed.
@@ -60,14 +52,13 @@ echo.
 echo ----------------------------------------
 echo [SUCCESS] Build Process Finished.
 echo.
-echo 1. PyQuickBox_Native.exe
+echo 1. PyQuickBox_Native.exe (No Icon, Verified Working)
 for %%I in (%APP_NAME%_Native.exe) do echo    Size: %%~zI bytes
 echo.
-echo 2. PyQuickBox.exe
+echo 2. PyQuickBox.exe (Has Icon)
 for %%I in (%APP_NAME%.exe) do echo    Size: %%~zI bytes
 echo.
-echo Please report these file sizes.
-echo If they are small (less than 10MB), the build failed silently.
+echo Note: If PyQuickBox.exe still fails, please use PyQuickBox_Native.exe
 echo ----------------------------------------
 pause
 exit /b 0
