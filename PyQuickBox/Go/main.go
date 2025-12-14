@@ -58,6 +58,9 @@ type LauncherApp struct {
 	Categories        []string
 	RegisteredFolders []string
 
+	// Settings Window
+	SettingsWindow fyne.Window
+
 	// 설정
 	DefaultPythonPath string
 	IconSize          float32
@@ -801,8 +804,18 @@ func (l *LauncherApp) savePreferences() {
 	l.App.Preferences().SetString(KeyRegisteredFolders, string(data))
 }
 
-// 설정 다이얼로그
+// 설정 다이얼로그 (새 창)
 func (l *LauncherApp) showSettingsDialog() {
+	// 이미 열려있으면 포커스
+	if l.SettingsWindow != nil {
+		l.SettingsWindow.Show()
+		l.SettingsWindow.RequestFocus()
+		return
+	}
+
+	w := l.App.NewWindow("Settings")
+	l.SettingsWindow = w
+
 	// 파이썬 경로
 	pythonEntry := widget.NewEntry()
 	pythonEntry.SetText(l.DefaultPythonPath)
@@ -812,7 +825,7 @@ func (l *LauncherApp) showSettingsDialog() {
 			if err == nil && reader != nil {
 				pythonEntry.SetText(reader.URI().Path())
 			}
-		}, l.Window)
+		}, w)
 	})
 
 	// 폰트 크기 조절
@@ -862,12 +875,15 @@ func (l *LauncherApp) showSettingsDialog() {
 				l.RegisteredFolders = append(l.RegisteredFolders[:i], l.RegisteredFolders[i+1:]...)
 				l.savePreferences()
 				l.refreshScripts()
+				// 메인 윈도우 갱신
 				l.Window.Content().Refresh()
+				// 리스트 갱신 (중요: 아이템 수 변경시 Refresh 필요)
+				// widget.List는 Refresh 호출 시 길이 재계산
 			}
 		},
 	)
 	folderScroll := container.NewVScroll(folderList)
-	folderScroll.SetMinSize(fyne.NewSize(0, 200))
+	folderScroll.SetMinSize(fyne.NewSize(0, 200)) // 리스트 최소 높이
 
 	addFolderBtn := widget.NewButtonWithIcon("Add Folder", theme.ContentAddIcon(), func() {
 		dialog.ShowFolderOpen(func(uri fyne.ListableURI, err error) {
@@ -887,7 +903,7 @@ func (l *LauncherApp) showSettingsDialog() {
 					folderList.Refresh()
 				}
 			}
-		}, l.Window)
+		}, w)
 	})
 
 	// 다이얼로그 내용 구성
@@ -910,18 +926,21 @@ func (l *LauncherApp) showSettingsDialog() {
 		folderScroll,
 	)
 
-	content := container.NewVBox(settingsItems...)
+	// 전체 내용을 스크롤 가능하게 (VBox -> VScroll)
+	mainContent := container.NewVBox(settingsItems...)
+	scrollContainer := container.NewVScroll(container.NewPadded(mainContent))
 
-	d := dialog.NewCustom("Settings", "Close", content, l.Window)
-	d.Resize(fyne.NewSize(500, 600))
+	w.SetContent(scrollContainer)
+	w.Resize(fyne.NewSize(500, 600))
 
-	d.SetOnClosed(func() {
+	w.SetOnClosed(func() {
 		l.DefaultPythonPath = pythonEntry.Text
 		l.savePreferences()
-		l.refreshScripts() // 폰트 변경 반영을 위해 갱신 필요 (사실 updateGridUI만 해도 되지만 단순화)
+		l.refreshScripts()
+		l.SettingsWindow = nil // 참조 해제
 	})
 
-	d.Show()
+	w.Show()
 }
 
 // 속성 다이얼로그 표시
