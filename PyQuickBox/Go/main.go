@@ -21,6 +21,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop" // Mouse interaction
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/fsnotify/fsnotify"
@@ -168,6 +169,89 @@ func (l *LauncherApp) handleDrops(uris []fyne.URI) {
 			}
 		}
 	}
+}
+
+// parseHeader는 스크립트 파일의 #pqr 주석을 파싱하여 메타데이터를 추출합니다.
+// parseHeader는 스크립트 파일의 #pqr 주석을 파싱하여 메타데이터를 추출합니다.
+func (l *LauncherApp) parseHeader(filePath string) (category, interpMac, interpWin, interpUbuntu string, terminal bool, interpDefault string) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "Uncategorized", "", "", "", false, ""
+	}
+	defer file.Close()
+
+	category = "Uncategorized" // Default
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "#pqr") {
+			continue
+		}
+
+		// 1. Try New Format: #pqr key=val; key=val
+		// Heuristic: Must contain '='
+		if strings.Contains(line, "=") {
+			content := strings.TrimSpace(strings.TrimPrefix(line, "#pqr"))
+			parts := strings.Split(content, ";")
+			for _, part := range parts {
+				kv := strings.SplitN(part, "=", 2)
+				if len(kv) == 2 {
+					key := strings.TrimSpace(kv[0])
+					val := strings.TrimSpace(kv[1])
+					switch strings.ToLower(key) {
+					case "cat":
+						category = val
+					case "mac":
+						interpMac = val
+					case "win":
+						interpWin = val
+					case "linux", "ubuntu":
+						interpUbuntu = val
+					case "term":
+						if strings.ToLower(val) == "true" {
+							terminal = true
+						}
+					case "def":
+						interpDefault = val
+					}
+				}
+			}
+			continue // Assuming new format supersedes or is exclusive per line
+		}
+
+		// 2. Try Legacy Format: #pqr key "val"
+		if strings.HasPrefix(line, "#pqr cat") {
+			re := regexp.MustCompile(`#pqr\s+cat\s+"([^"]+)"`)
+			matches := re.FindStringSubmatch(line)
+			if len(matches) > 1 {
+				category = matches[1]
+			}
+		} else if strings.HasPrefix(line, "#pqr mac") {
+			re := regexp.MustCompile(`#pqr\s+mac\s+"([^"]+)"`)
+			matches := re.FindStringSubmatch(line)
+			if len(matches) > 1 {
+				interpMac = matches[1]
+			}
+		} else if strings.HasPrefix(line, "#pqr win") {
+			re := regexp.MustCompile(`#pqr\s+win\s+"([^"]+)"`)
+			matches := re.FindStringSubmatch(line)
+			if len(matches) > 1 {
+				interpWin = matches[1]
+			}
+		} else if strings.HasPrefix(line, "#pqr ubuntu") {
+			re := regexp.MustCompile(`#pqr\s+ubuntu\s+"([^"]+)"`)
+			matches := re.FindStringSubmatch(line)
+			if len(matches) > 1 {
+				interpUbuntu = matches[1]
+			}
+		} else if strings.HasPrefix(line, "#pqr terminal") {
+			if strings.Contains(line, "true") {
+				terminal = true
+			}
+		}
+	}
+	return
 }
 
 // --- UI 구성 ---
@@ -500,94 +584,6 @@ func (l *LauncherApp) refreshScripts() {
 	}
 }
 
-// 파일 헤더 파싱 (#pqr)
-func (l *LauncherApp) parseHeader(path string) (string, string, string, string, bool, string) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "Uncategorized", "", "", "", false, ""
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	category := "Uncategorized"
-	var interpDefault, interpMac, interpWin, interpUbuntu string
-	var terminal bool
-
-	lineCount := 0
-	for scanner.Scan() {
-		if lineCount > 15 { // 헤더 파싱 범위 약간 늘림
-			break
-		}
-		line := strings.TrimSpace(scanner.Text())
-
-		// #pqr cat "Category"
-		if strings.HasPrefix(line, "#pqr cat") {
-			re := regexp.MustCompile(`#pqr\s+cat\s+"([^"]+)"`)
-			matches := re.FindStringSubmatch(line)
-			if len(matches) > 1 {
-				category = matches[1]
-			}
-		}
-
-		// #pqr mac "Path"
-		if strings.HasPrefix(line, "#pqr mac") {
-			re := regexp.MustCompile(`#pqr\s+mac\s+"([^"]+)"`)
-			matches := re.FindStringSubmatch(line)
-			if len(matches) > 1 {
-				interpMac = matches[1]
-			}
-		}
-
-		// #pqr win "Path"
-		if strings.HasPrefix(line, "#pqr win") {
-			re := regexp.MustCompile(`#pqr\s+win\s+"([^"]+)"`)
-			matches := re.FindStringSubmatch(line)
-			if len(matches) > 1 {
-				interpWin = matches[1]
-			}
-		}
-
-		// #pqr ubuntu "Path"
-		if strings.HasPrefix(line, "#pqr ubuntu") {
-			re := regexp.MustCompile(`#pqr\s+ubuntu\s+"([^"]+)"`)
-			matches := re.FindStringSubmatch(line)
-			if len(matches) > 1 {
-				interpUbuntu = matches[1]
-			}
-		}
-
-		// #pqr terminal true
-		if strings.HasPrefix(line, "#pqr terminal") {
-			if strings.Contains(line, "true") {
-				terminal = true
-			}
-		}
-
-		// Legacy: #pqr linux ... or simple #pqr "Cat" "Interp"
-		if strings.HasPrefix(line, "#pqr") &&
-			!strings.HasPrefix(line, "#pqr cat") &&
-			!strings.HasPrefix(line, "#pqr mac") &&
-			!strings.HasPrefix(line, "#pqr win") &&
-			!strings.HasPrefix(line, "#pqr ubuntu") &&
-			!strings.HasPrefix(line, "#pqr terminal") {
-
-			re := regexp.MustCompile(`#pqr\s+\w+.*"([^"]+)"\s*(.*)`)
-			matches := re.FindStringSubmatch(line)
-			if len(matches) > 1 {
-				// 이미 카테고리가 설정되지 않았다면 (우선순위를 cat 태그에 둠)
-				if category == "Uncategorized" {
-					category = matches[1]
-				}
-				if len(matches) > 2 {
-					interpDefault = strings.TrimSpace(matches[2])
-				}
-			}
-		}
-		lineCount++
-	}
-	return category, interpMac, interpWin, interpUbuntu, terminal, interpDefault
-}
-
 // --- 로직: 실행 ---
 func (l *LauncherApp) runScript(s ScriptItem) {
 	var python string
@@ -857,7 +853,8 @@ func (l *LauncherApp) showSettingsDialog() {
 	}
 
 	// 폴더 리스트
-	folderList := widget.NewList(
+	var folderList *widget.List
+	folderList = widget.NewList(
 		func() int { return len(l.RegisteredFolders) },
 		func() fyne.CanvasObject {
 			return container.NewBorder(nil, nil, nil, widget.NewButtonWithIcon("", theme.DeleteIcon(), nil), widget.NewLabel("template"))
@@ -871,14 +868,23 @@ func (l *LauncherApp) showSettingsDialog() {
 			label.SetText(folder)
 
 			btn.OnTapped = func() {
-				// 삭제 로직
-				l.RegisteredFolders = append(l.RegisteredFolders[:i], l.RegisteredFolders[i+1:]...)
-				l.savePreferences()
-				l.refreshScripts()
-				// 메인 윈도우 갱신
-				l.Window.Content().Refresh()
-				// 리스트 갱신 (중요: 아이템 수 변경시 Refresh 필요)
-				// widget.List는 Refresh 호출 시 길이 재계산
+				// 삭제 로직: 인덱스 i를 직접 사용하면 슬라이스 변경 시 패닉 발생 가능
+				// 값(folder)으로 현재 인덱스를 다시 찾아서 삭제
+				idx := -1
+				for k, v := range l.RegisteredFolders {
+					if v == folder {
+						idx = k
+						break
+					}
+				}
+
+				if idx != -1 {
+					l.RegisteredFolders = append(l.RegisteredFolders[:idx], l.RegisteredFolders[idx+1:]...)
+					l.savePreferences()
+					l.refreshScripts()
+					// 리스트 갱신
+					folderList.Refresh()
+				}
 			}
 		},
 	)
@@ -952,17 +958,34 @@ func (l *LauncherApp) showPropertiesDialog(s ScriptItem) {
 	catEntry.SetText(s.Category)
 
 	// OS별 인터프리터 설정
-	macEntry := widget.NewEntry()
-	macEntry.SetPlaceHolder("Path to python/sh (Mac)")
-	macEntry.SetText(s.InterpMac)
+	// Helper to create browse row
+	createBrowseRow := func(placeholder string, initial string) (*widget.Entry, *fyne.Container) {
+		entry := widget.NewEntry()
+		entry.SetPlaceHolder(placeholder)
+		entry.SetText(initial)
 
-	winEntry := widget.NewEntry()
-	winEntry.SetPlaceHolder("Path to python/exe (Windows)")
-	winEntry.SetText(s.InterpWin)
+		btn := widget.NewButton("Browse", func() {
+			d := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
+				if err == nil && reader != nil {
+					entry.SetText(reader.URI().Path())
+				}
+			}, l.Window)
+			// d.ShowHiddenFiles = true // Fyne v2.x might not expose this directly on FileOpen struct easily pre-2.5?
+			// Actually recent Fyne versions support this if the driver allows, usually standard dialogs
+			// For internal dialog, we might need a custom one, but let's try standard first.
+			// User specifically asked for "hidden files".
+			// Let's assume standard behavior or try to hit "Show" for hidden if API exists.
+			d.Show()
+		})
 
-	ubuEntry := widget.NewEntry()
-	ubuEntry.SetPlaceHolder("Path to python/sh (Ubuntu)")
-	ubuEntry.SetText(s.InterpUbuntu)
+		// Layout: Entry takes all space, Button on right
+		row := container.NewBorder(nil, nil, nil, btn, entry)
+		return entry, row
+	}
+
+	macEntry, macRow := createBrowseRow("Path to python/sh (Mac)", s.InterpMac)
+	winEntry, winRow := createBrowseRow("Path to python/exe (Windows)", s.InterpWin)
+	ubuEntry, ubuRow := createBrowseRow("Path to python/sh (Ubuntu)", s.InterpUbuntu)
 
 	termCheck := widget.NewCheck("Run in Terminal", nil)
 	termCheck.Checked = s.Terminal
@@ -970,101 +993,131 @@ func (l *LauncherApp) showPropertiesDialog(s ScriptItem) {
 	form := &widget.Form{
 		Items: []*widget.FormItem{
 			{Text: "Category", Widget: catEntry},
-			{Text: "Mac Interpreter", Widget: macEntry},
-			{Text: "Win Interpreter", Widget: winEntry},
-			{Text: "Ubuntu Interpreter", Widget: ubuEntry},
+			{Text: "Mac", Widget: macRow},
+			{Text: "Win", Widget: winRow},
+			{Text: "Ubuntu", Widget: ubuRow},
 			{Text: "Option", Widget: termCheck},
 		},
 	}
 
 	content := container.NewVBox(desc, form)
 
-	// 버튼 추가 (저장/취소)
-	// Dialog 생성을 위해 먼저 변수 선언 필요? 아니면 콜백 내부에서 d 참조?
-	// d를 나중에 할당하면 클로저에서 nil panic 가능성?
-	// 하지만 showPropertiesDialog 함수 내에서는 d가 생성된 후 콜백이 실행되므로 괜찮음.
-	// 하지만 d.Hide()를 호출하려면 d가 필요함.
-
-	// 해결책: 커스텀 다이얼로그 구조체 사용하지 않고, 컨텐츠에 버튼 포함하여 NewCustom 호출.
-	// d 변수를 먼저 선언.
-	var d dialog.Dialog
+	// 버튼 추가 (저장/취소/닫기)
+	var popup *widget.PopUp
 
 	saveBtn := widget.NewButton("Save", func() {
 		l.updateScriptMetadata(s, catEntry.Text, macEntry.Text, winEntry.Text, ubuEntry.Text, termCheck.Checked)
 		l.refreshScripts()
-		if d != nil {
-			d.Hide()
+		if popup != nil {
+			popup.Hide()
 		}
 	})
 	cancelBtn := widget.NewButton("Cancel", func() {
-		if d != nil {
-			d.Hide()
+		if popup != nil {
+			popup.Hide()
+		}
+	})
+	closeBtn := widget.NewButton("Close", func() {
+		if popup != nil {
+			popup.Hide()
 		}
 	})
 
-	contentWithButtons := container.NewBorder(nil, container.NewHBox(saveBtn, cancelBtn), nil, nil, content)
+	// Buttons Row
+	buttons := container.NewHBox(layout.NewSpacer(), saveBtn, cancelBtn, closeBtn, layout.NewSpacer())
 
-	d = dialog.NewCustom("Properties", "Close", contentWithButtons, l.Window)
-	d.Resize(fyne.NewSize(400, 400))
-	d.Show()
+	// Main Layout
+	// Title
+	title := widget.NewLabelWithStyle("Properties", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+
+	mainContainer := container.NewVBox(
+		title,
+		widget.NewSeparator(),
+		container.NewPadded(content),
+		widget.NewSeparator(),
+		buttons,
+	)
+
+	// Adding some padding around the whole dialog content
+	finalContent := container.NewPadded(mainContainer)
+
+	// Widen: Enforce minimum width using a container that requests it?
+	// Or explicitly resize the popup content if possible.
+	// container.NewGridWrap(size, content) forces a size.
+	// Or just ensure the entries are wide enough?
+	// Let's wrap finalContent in a container that enforces min width.
+	// A hacky way is a transparent rect with min size in a stack?
+	// Or just let's set a MinSize on the popup content?
+	// Actually, `widget.NewModalPopUp` sizes validly.
+	// If inputs are too narrow, the window is too narrow.
+	// We can put the content in a container with a MinWidth? Use a specialized layout?
+	// Let's use a container that has a minimum width.
+	// Actually, just resizing the content object before showing? No, layout re-calcs.
+
+	// Best approach: Add a wide spacer or ensure text fields desire more width.
+	// Mac/Win/Ubu fields are `NewEntry`. They expand.
+	// If we set a MinSize on the mainContainer?
+	// We can't set MinSize on VBox directly.
+	// Use a utility container that enforces min size.
+	// Or simpler: Resize the CanvasObject? No.
+
+	// Let's add an invisible spacer of desired width to the VBox.
+	spacer := canvas.NewRectangle(color.Transparent)
+	spacer.SetMinSize(fyne.NewSize(500, 0)) // 500px width
+	mainContainer.Add(spacer)
+
+	popup = widget.NewModalPopUp(finalContent, l.Window.Canvas())
+	popup.Show()
 }
 
 // 메타데이터 업데이트 (파일 쓰기)
-func (l *LauncherApp) updateScriptMetadata(s ScriptItem, cat, mac, win, ubu string, term bool) {
-	content, err := ioutil.ReadFile(s.Path)
+// 기존 파일을 읽어서 #pqr 라인을 찾아서 수정하거나, 없으면 맨 위에 추가
+func (l *LauncherApp) updateScriptMetadata(s ScriptItem, cat, mac, win, ubuntu string, term bool) {
+	input, err := ioutil.ReadFile(s.Path)
 	if err != nil {
 		dialog.ShowError(err, l.Window)
 		return
 	}
 
-	lines := strings.Split(string(content), "\n")
+	lines := strings.Split(string(input), "\n")
 	var newLines []string
+	pqrFound := false
 
-	// Shebang 보존 확인
-	hasShebang := len(lines) > 0 && strings.HasPrefix(lines[0], "#!")
-	if hasShebang {
-		newLines = append(newLines, lines[0])
-	}
+	// Construct new pqr line (using 'linux' key for ubuntu value)
+	newPqr := fmt.Sprintf("#pqr cat=%s; mac=%s; win=%s; linux=%s; term=%t", cat, mac, win, ubuntu, term)
 
-	// 새 태그 생성
-	newLines = append(newLines, fmt.Sprintf("#pqr cat \"%s\"", cat))
-	if mac != "" {
-		newLines = append(newLines, fmt.Sprintf("#pqr mac \"%s\"", mac))
-	}
-	if win != "" {
-		newLines = append(newLines, fmt.Sprintf("#pqr win \"%s\"", win))
-	}
-	if ubu != "" {
-		newLines = append(newLines, fmt.Sprintf("#pqr ubuntu \"%s\"", ubu))
-	}
-	if term {
-		newLines = append(newLines, "#pqr terminal true")
-	}
-
-	// 기존 내용 중 #pqr 태그 제거 (상단 20줄 이내)
-	for i, line := range lines {
-		if hasShebang && i == 0 {
-			continue
-		}
-
-		isTag := false
-		if i < 30 { // 30줄까지만 검사
-			trim := strings.TrimSpace(line)
-			if strings.HasPrefix(trim, "#pqr") {
-				isTag = true
+	for _, line := range lines {
+		trim := strings.TrimSpace(line)
+		if strings.HasPrefix(trim, "#pqr") {
+			// Replace existing pqr line
+			if !pqrFound {
+				newLines = append(newLines, newPqr)
+				pqrFound = true
 			}
-		}
-
-		if !isTag {
+			// If duplicate pqr lines exist, ignore subsequent ones (we replaced the first)
+		} else {
 			newLines = append(newLines, line)
 		}
 	}
 
-	err = ioutil.WriteFile(s.Path, []byte(strings.Join(newLines, "\n")), 0644)
+	if !pqrFound {
+		// Insert at top
+		// Check for shebang
+		if len(newLines) > 0 && strings.HasPrefix(strings.TrimSpace(newLines[0]), "#!") {
+			// Insert after shebang
+			newLines = append(newLines[:1], newLines[0:]...)
+			newLines[1] = newPqr
+		} else {
+			// Prepend
+			newLines = append([]string{newPqr}, newLines...)
+		}
+	}
+
+	output := strings.Join(newLines, "\n")
+	err = ioutil.WriteFile(s.Path, []byte(output), 0644)
 	if err != nil {
 		dialog.ShowError(err, l.Window)
 	}
-
 }
 
 // 파일 감시

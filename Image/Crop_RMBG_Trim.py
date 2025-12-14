@@ -1,4 +1,5 @@
 #pqr cat "Image"
+#pqr ubuntu "/home/dinki/python/default/.venv/bin/python"
 
 import sys
 import io
