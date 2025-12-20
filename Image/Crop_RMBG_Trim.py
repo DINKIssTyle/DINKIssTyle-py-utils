@@ -1,5 +1,4 @@
-#pqr cat "Image"
-#pqr ubuntu "/home/dinki/python/default/.venv/bin/python"
+#pqr cat=Image; mac=; win=; linux=/home/dinki/python/default/.venv/bin/python; term=false
 
 import sys
 import io
