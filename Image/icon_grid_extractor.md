@@ -11,18 +11,25 @@ It features an intuitive grid (ruler) system to partition images, supports trans
     *   Click top/left rulers to create guidelines.
     *   Drag guidelines to adjust, right-click to remove.
 *   **Background Removal (Masking)**:
-    *   **Pick BG**: Select specific colors from the image to make them transparent.
+    *   **Pick BG**: Select specific colors from the image to make them transparent. Includes a preview toast notification.
     *   Adjust Tolerance and Feather for smooth edges.
+*   **Ignore Cells**:
+    *   Toggle **Ignore Cells** mode to mark specific specific cells with a red X. These cells will be excluded from export.
 *   **Cell Naming**:
     *   Double-click each cell to specify the export filename.
     *   Auto-naming based on coordinates if unspecified (`icon_001_r00_c01...`).
 *   **Auto Save/Restore**:
-    *   Generates a `.grid` file (JSON) in the same path as the image, saving grid positions, cell names, and options.
+    *   Generates a `.grid` file (JSON) in the same path as the image, saving grid positions, cell names, mask settings, and ignored cells.
     *   Automatically loads the `.grid` file when opening the image.
 *   **Export**:
     *   Supports **PNG / ICO**.
     *   **Trim**: Automatically removes transparent margins.
     *   **Limit**: Limits maximum pixel size (keeps aspect ratio).
+    *   **Pad**: Adds extra padding (pixels) around the content.
+    *   **Auto Scale**: Maintains relative size of icons based on the largest content.
+*   **Modern UI**:
+    *   Compact and consistent toolbar design.
+    *   Toast notifications for mode changes (Pick BG, Ignore Cells).
 *   **Drag & Drop**: Drag and drop image files directly onto the window to open.
 
 ## 🛠️ Requirements
@@ -54,17 +61,18 @@ pip install qtpy PyQt6 numpy Pillow
 4.  **Set Options (Optional)**:
     *   **Pick BG**: Enable this and click on the image background color to make it transparent.
     *   **Tol / Feather**: Adjust transparency tolerance and edge softness.
+    *   **Ignore Cells**: Enable this to click on cells you want to skip during export.
 5.  **Name Cells**:
     *   Double-click the cell you want to extract to enter a filename. (Exclude extension)
 6.  **Export**:
-    *   Check `Format` (png/ico), `Trim`, and `Limit` options.
+    *   Check `Format`, `Trim`, `Limit`, `Pad`, and `Auto Scale` options.
     *   Click `Export` and choose the output folder.
     *   Icon files are created in the folder, and the settings file (`.grid`) is saved in the original image folder.
 
 ## 📝 Configuration File (.grid)
 
 Work progress is saved in a JSON-formatted `.grid` file.
-This includes grid line coordinates, cell names, mask settings, and export options, allowing you to resume work at any time.
+This includes grid line coordinates, cell names, mask settings, ignored cells, and export options, allowing you to resume work at any time.
 
 ---
 
@@ -81,18 +89,25 @@ This includes grid line coordinates, cell names, mask settings, and export optio
     *   상단/좌측 룰러를 클릭하여 가이드라인 생성.
     *   생성된 가이드라인은 마우스로 잡고 이동하거나 우클릭하여 삭제 가능.
 *   **배경 제거 (Masking)**:
-    *   **Pick BG**: 이미지의 특정 색상을 찍어 투명하게 처리.
+    *   **Pick BG**: 이미지의 특정 색상을 찍어 투명하게 처리. (토스트 알림 지원)
     *   허용 오차(Tolerance) 및 부드러운 경계(Feather) 조절 가능.
+*   **셀 제외 (Ignore Cells)**:
+    *   **Ignore Cells** 모드를 켜고 셀을 클릭하면 빨간 X로 표시되며, 해당 셀은 내보내기에서 제외됩니다.
 *   **셀 명명 (Naming)**:
     *   각 칸을 더블 클릭하여 내보낼 파일 이름 지정.
     *   지정하지 않을 경우 위치 좌표 기반으로 자동 명명 (`icon_001_r00_c01...`).
 *   **자동 저장/복원**:
-    *   이미지와 동일한 경로에 `.grid` 파일(JSON)을 생성하여 그리드 위치, 셀 이름, 옵션 등을 저장.
+    *   이미지와 동일한 경로에 `.grid` 파일(JSON)을 생성하여 그리드 위치, 셀 이름, 마스크 설정, 제외된 셀 목록 등을 저장.
     *   이미지를 열 때 `.grid` 파일이 있으면 자동으로 불러옴.
 *   **내보내기 (Export)**:
     *   **PNG / ICO** 지원.
     *   **Trim**: 투명한 여백 자동 제거.
     *   **Limit**: 최대 픽셀 크기 제한 (비율 유지 리사이즈).
+    *   **Pad**: 콘텐츠 주변에 여백(픽셀) 추가.
+    *   **Auto Scale**: 가장 큰 아이콘을 기준으로 비율을 맞춰, 모든 아이콘의 상대적 크기를 유지.
+*   **모던 UI**:
+    *   컴팩트하고 일관된 툴바 디자인.
+    *   모드 전환 시 직관적인 토스트 알림 메시지.
 *   **드래그 앤 드롭**: 이미지 파일을 창에 끌어다 놓아 바로 열기.
 
 ## 🛠️ 요구 사항 (Requirements)
@@ -124,17 +139,18 @@ pip install qtpy PyQt6 numpy Pillow
 4.  **옵션 설정 (필요 시)**:
     *   **Pick BG**: 배경을 투명하게 날리고 싶다면 버튼을 켜고 이미지 배경색을 클릭합니다.
     *   **Tol / Feather**: 투명화 강도 및 경계를 조절합니다.
+    *   **Ignore Cells**: 추출하고 싶지 않은 칸이 있다면 이 모드를 켜고 해당 칸을 클릭해 X 표시합니다.
 5.  **셀 이름 지정**:
     *   추출할 칸을 더블 클릭하여 파일명을 입력합니다. (확장자 제외)
 6.  **내보내기**:
-    *   `Format` (png/ico), `Trim`, `Limit` 옵션을 확인합니다.
+    *   `Format`, `Trim`, `Limit`, `Pad`, `Auto Scale` 등 옵션을 확인합니다.
     *   `Export` 버튼을 눌러 저장할 폴더를 선택합니다.
     *   선택된 폴더에 아이콘 파일이 생성되고, 원본 이미지 폴더에는 설정 파일(`.grid`)이 저장됩니다.
 
 ## 📝 설정 파일 (.grid)
 
 작업 내용은 JSON 형식의 `.grid` 파일로 저장됩니다.
-이 파일에는 그리드 라인 좌표, 각 셀의 이름, 마스크 설정 및 내보내기 옵션이 포함되어 있어, 언제든 작업을 재개할 수 있습니다.
+이 파일에는 그리드 라인 좌표, 각 셀의 이름, 마스크 설정, 제외된 셀 목록 및 내보내기 옵션이 포함되어 있어, 언제든 작업을 재개할 수 있습니다.
 
 ---
 **(C) 2025 DINKI'ssTyle**

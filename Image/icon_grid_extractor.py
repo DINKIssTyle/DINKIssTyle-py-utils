@@ -4,7 +4,7 @@
 import sys
 import os
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Set
 
 import numpy as np
 from PIL import Image, ImageFilter
@@ -64,6 +64,44 @@ def limit_size_keep_aspect(rgba: np.ndarray, max_px: int) -> np.ndarray:
     pil = Image.fromarray(rgba, mode="RGBA")
     pil = pil.resize((new_w, new_h), resample=Image.Resampling.LANCZOS)
     return np.array(pil, dtype=np.uint8)
+
+
+def resize_by_scale(rgba: np.ndarray, scale: float) -> np.ndarray:
+    if scale == 1.0:
+        return rgba
+    h, w = rgba.shape[:2]
+    new_w = max(1, int(w * scale))
+    new_h = max(1, int(h * scale))
+    pil = Image.fromarray(rgba, mode="RGBA")
+    pil = pil.resize((new_w, new_h), resample=Image.Resampling.LANCZOS)
+    return np.array(pil, dtype=np.uint8)
+
+
+def pad_image_center(rgba: np.ndarray, target_w: int, target_h: int) -> np.ndarray:
+    """Place rgba in the center of a target_w x target_h transparent image."""
+    h, w = rgba.shape[:2]
+    # If source is larger than target, we might need to crop or warn, but assuming prior resize fit it inside.
+    # Just center it.
+    
+    out = np.zeros((target_h, target_w, 4), dtype=np.uint8)
+    
+    # Calculate offset
+    x_off = (target_w - w) // 2
+    y_off = (target_h - h) // 2
+    
+    # Clip bounds just in case
+    x_start = max(0, x_off)
+    y_start = max(0, y_off)
+    x_end = min(target_w, x_off + w)
+    y_end = min(target_h, y_off + h)
+    
+    img_x_start = max(0, -x_off)
+    img_y_start = max(0, -y_off)
+    img_x_end = img_x_start + (x_end - x_start)
+    img_y_end = img_y_start + (y_end - y_start)
+    
+    out[y_start:y_end, x_start:x_end] = rgba[img_y_start:img_y_end, img_x_start:img_x_end]
+    return out
 
 
 # -----------------------------
@@ -192,40 +230,45 @@ class DraggableGridLine(QtWidgets.QGraphicsLineItem):
 
 
 # -----------------------------
-# Grid Cell (for naming)
+# -----------------------------
+# Grid Cell (for naming and ignore marking)
 # -----------------------------
 class GridCellItem(QtWidgets.QGraphicsRectItem):
-    def __init__(self, r, c, rect, name, on_rename_cb):
+    def __init__(self, r, c, rect, name, on_rename_cb, on_click_cb, is_ignored=False):
         super().__init__(rect)
         self.r = r
         self.c = c
         self.name = name
         self.on_rename_cb = on_rename_cb
+        self.on_click_cb = on_click_cb
+        self.is_ignored = is_ignored
 
         # Appearance
-        self.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0, 0)))  # Invisible border
-        self.setBrush(QtGui.QBrush(QtGui.QColor(0, 0, 0, 0))) # Transparent fill
-        self.setZValue(5) # Below lines (10)
+        self.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0, 0)))
+        self.setBrush(QtGui.QBrush(QtGui.QColor(0, 0, 0, 0)))
+        self.setZValue(5)
 
         if name:
             self.setup_label(rect)
 
     def setup_label(self, rect):
-        # Add text label if name exists
         text = QtWidgets.QGraphicsTextItem(self.name, self)
-        # Center the text
         font = QtGui.QFont()
         font.setPixelSize(max(10, int(rect.height() / 5)))
         text.setFont(font)
-        text.setDefaultTextColor(QtGui.QColor(255, 0, 0, 200)) # Reddish
+        text.setDefaultTextColor(QtGui.QColor(255, 0, 0, 200))
         
         br = text.boundingRect()
         tx = rect.x() + (rect.width() - br.width()) / 2
         ty = rect.y() + (rect.height() - br.height()) / 2
         text.setPos(tx, ty)
 
+    def mousePressEvent(self, e):
+        if e.button() == QtCore.Qt.MouseButton.LeftButton:
+            self.on_click_cb(self.r, self.c)
+        super().mousePressEvent(e)
+
     def mouseDoubleClickEvent(self, e):
-        # Ask for new name
         text, ok = QtWidgets.QInputDialog.getText(None, "Icon Name", 
                                                   f"Enter name for cell ({self.r},{self.c}):", 
                                                   text=self.name)
@@ -233,8 +276,15 @@ class GridCellItem(QtWidgets.QGraphicsRectItem):
             self.on_rename_cb(self.r, self.c, text)
 
     def paint(self, painter, option, widget=None):
-        # Optional: draw subtle highlight on hover? For now just transparent logic container
         super().paint(painter, option, widget)
+        if self.is_ignored:
+            painter.save()
+            pen = QtGui.QPen(QtGui.QColor(255, 0, 0, 200), 3)
+            painter.setPen(pen)
+            r = self.rect()
+            painter.drawLine(r.topLeft(), r.bottomRight())
+            painter.drawLine(r.topRight(), r.bottomLeft())
+            painter.restore()
 
 
 # -----------------------------
@@ -267,6 +317,12 @@ class HRuler(QtWidgets.QWidget):
     def paintEvent(self, _):
         p = QtGui.QPainter(self)
         p.fillRect(self.rect(), QtGui.QColor(245, 245, 248))
+        
+        # Font for ruler numbers
+        font = p.font()
+        font.setPixelSize(10)
+        p.setFont(font)
+
         p.setPen(QtGui.QPen(QtGui.QColor(140, 140, 150)))
 
         w = self.width()
@@ -312,6 +368,12 @@ class VRuler(QtWidgets.QWidget):
     def paintEvent(self, _):
         p = QtGui.QPainter(self)
         p.fillRect(self.rect(), QtGui.QColor(245, 245, 248))
+        
+        # Font for ruler numbers
+        font = p.font()
+        font.setPixelSize(10)
+        p.setFont(font)
+
         p.setPen(QtGui.QPen(QtGui.QColor(140, 140, 150)))
 
         h = self.height()
@@ -385,6 +447,8 @@ class ExportOptions:
     fmt: str        # "png" or "ico"
     trim: bool
     limit_px: int
+    padding: int
+    auto_scale: bool
 
 
 # -----------------------------
@@ -441,16 +505,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.x_lines: List[int] = []
         self.y_lines: List[int] = []
         self.cell_data: dict = {} # (r, c) -> name
+        self.ignored_cells: Set[Tuple[int, int]] = set() # (r, c) -> ignored
+        self.ignore_mode = False
         self.current_image_path: Optional[str] = None # Track current file for .grid saving/loading
 
         # Pen for grid
         self.grid_pen = QtGui.QPen(QtGui.QColor(37, 99, 235, 210), 1)
         self.grid_pen.setCosmetic(True)
 
-        # Toolbar / Status
-        self._build_toolbar()
         self.status = QtWidgets.QStatusBar()
         self.setStatusBar(self.status)
+
+        # Build UI
+        self._build_ui_controls()
 
         # Canvas BG default
         self._set_canvas_bg("#ffffff")
@@ -458,94 +525,218 @@ class MainWindow(QtWidgets.QMainWindow):
         # For BG picking
         self.view.viewport().installEventFilter(self)
 
-    # -----------------
-    # Toolbar
-    # -----------------
-    def _build_toolbar(self):
-        tb = QtWidgets.QToolBar("Tools")
-        tb.setMovable(False)
-        self.addToolBar(tb)
+        # Toast Label
+        self.lbl_toast = QtWidgets.QLabel(self)
+        self.lbl_toast.setStyleSheet("background-color: rgba(0, 0, 0, 180); color: white; border-radius: 12px; padding: 6px 16px; font-weight: bold;")
+        self.lbl_toast.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.lbl_toast.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.lbl_toast.hide()
 
-        act_open = QtGui.QAction("Open", self)
-        act_open.triggered.connect(self.open_image)
-        tb.addAction(act_open)
+    # -----------------
+    # UI Setup
+    # -----------------
+    def _build_ui_controls(self):
+        # --- Toolbar 1 (Top) ---
+        tb1 = QtWidgets.QToolBar("Main Tools")
+        tb1.setMovable(False)
+        tb1.setStyleSheet("QToolBar { padding: 5px; }")
+        self.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, tb1)
+
+        btn_open = QtWidgets.QPushButton("Open")
+        btn_open.clicked.connect(self.open_image)
+        btn_open.setFixedHeight(26)
+        tb1.addWidget(btn_open)
+
+        # Spacer to push export options to right
+        spacer = QtWidgets.QWidget()
+        spacer.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Preferred)
+        tb1.addWidget(spacer)
+
+        tb1.addWidget(QtWidgets.QLabel(" Export: "))
+        self.cmb_fmt = QtWidgets.QComboBox()
+        self.cmb_fmt.addItems(["png", "ico"])
+        self.cmb_fmt.setFixedHeight(26)
+        tb1.addWidget(self.cmb_fmt)
+
+        tb1.addSeparator()
+
+        self.chk_trim = QtWidgets.QCheckBox("Trim")
+        self.chk_trim.setChecked(True)
+        self.chk_trim.setFixedHeight(26)
+        tb1.addWidget(self.chk_trim)
+
+        tb1.addWidget(QtWidgets.QLabel(" Limit(px):"))
+        self.sp_limit = QtWidgets.QSpinBox()
+        self.sp_limit.setRange(0, 2048)
+        self.sp_limit.setValue(256)
+        self.sp_limit.setToolTip("0 = no limit")
+        self.sp_limit.setFixedHeight(26)
+        tb1.addWidget(self.sp_limit)
+
+        tb1.addWidget(QtWidgets.QLabel(" Pad:"))
+        self.sp_padding = QtWidgets.QSpinBox()
+        self.sp_padding.setRange(0, 512)
+        self.sp_padding.setValue(0)
+        self.sp_padding.setFixedHeight(26)
+        tb1.addWidget(self.sp_padding)
+
+        tb1.addSeparator()
+
+        self.chk_auto_scale = QtWidgets.QCheckBox("Auto Scale")
+        self.chk_auto_scale.setChecked(True)
+        self.chk_auto_scale.setToolTip("Find largest cell content as reference scale, so all items keep relative size.")
+        self.chk_auto_scale.setFixedHeight(26)
+        tb1.addWidget(self.chk_auto_scale)
+
+        btn_export = QtWidgets.QPushButton("Export")
+        btn_export.clicked.connect(self.export_slices)
+        btn_export.setFixedHeight(26)
+        tb1.addWidget(btn_export)
+
+        self.addToolBarBreak()
+
+        # --- Toolbar 2 (Bottom) ---
+        tb2 = QtWidgets.QToolBar("Grid & Mask Tools")
+        tb2.setMovable(False)
+        tb2.setStyleSheet("""
+            QToolBar { padding: 5px; }
+            QWidget { font-size: 11px; }
+            QToolButton { font-size: 11px; }
+        """)
+        self.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, tb2)
 
         act_clear_grid = QtGui.QAction("Clear Grid", self)
         act_clear_grid.triggered.connect(self.clear_grid)
-        tb.addAction(act_clear_grid)
+        tb2.addAction(act_clear_grid)
 
-        tb.addSeparator()
+        tb2.addSeparator()
 
         self.btn_pick_bg = QtWidgets.QToolButton()
         self.btn_pick_bg.setText("Pick BG")
         self.btn_pick_bg.setCheckable(True)
         self.btn_pick_bg.toggled.connect(self.toggle_pick_bg)
-        tb.addWidget(self.btn_pick_bg)
+        self.btn_pick_bg.setFixedHeight(22)
+        tb2.addWidget(self.btn_pick_bg)
 
-        tb.addWidget(QtWidgets.QLabel(" Tol:"))
+        tb2.addWidget(QtWidgets.QLabel(" Tol:"))
         self.sl_tol = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.sl_tol.setRange(0, 80)
         self.sl_tol.setValue(16)
         self.sl_tol.setFixedWidth(120)
+        self.sl_tol.setFixedHeight(22)  # Match specific height
         self.sl_tol.valueChanged.connect(self.rebuild_mask)
-        tb.addWidget(self.sl_tol)
+        tb2.addWidget(self.sl_tol)
 
         self.chk_aa = QtWidgets.QCheckBox("AA")
         self.chk_aa.setChecked(True)
         self.chk_aa.stateChanged.connect(self.rebuild_mask)
-        tb.addWidget(self.chk_aa)
+        self.chk_aa.setFixedHeight(22)
+        tb2.addWidget(self.chk_aa)
 
-        tb.addWidget(QtWidgets.QLabel(" Feather:"))
+        tb2.addWidget(QtWidgets.QLabel(" Feather:"))
         self.sp_feather = QtWidgets.QSpinBox()
         self.sp_feather.setRange(0, 12)
         self.sp_feather.setValue(3)
         self.sp_feather.valueChanged.connect(self.rebuild_mask)
-        tb.addWidget(self.sp_feather)
+        self.sp_feather.setFixedHeight(22)
+        tb2.addWidget(self.sp_feather)
 
         act_clear_mask = QtGui.QAction("Clear Mask", self)
         act_clear_mask.triggered.connect(self.clear_mask)
-        tb.addAction(act_clear_mask)
+        tb2.addAction(act_clear_mask)
 
-        tb.addSeparator()
+        tb2.addSeparator()
 
         act_canvas_bg = QtGui.QAction("Canvas BG", self)
         act_canvas_bg.triggered.connect(self.pick_canvas_bg)
-        tb.addAction(act_canvas_bg)
+        tb2.addAction(act_canvas_bg)
 
-        tb.addSeparator()
+        tb2.addSeparator()
+        
+        self.btn_ignore_mode = QtWidgets.QToolButton()
+        self.btn_ignore_mode.setText("Ignore Cells")
+        self.btn_ignore_mode.setCheckable(True)
+        self.btn_ignore_mode.toggled.connect(self.toggle_ignore_mode)
+        self.btn_ignore_mode.setToolTip("Click cells to toggle ignore status (Red X). Ignored cells are skipped in export.")
+        self.btn_ignore_mode.setFixedHeight(22)
+        tb2.addWidget(self.btn_ignore_mode)
+        
+        # --- StatusBar Zoom Controls ---
+        self.sp_zoom = QtWidgets.QDoubleSpinBox()
+        self.sp_zoom.setRange(10, 500)
+        self.sp_zoom.setSuffix("%")
+        self.sp_zoom.setDecimals(1)
+        self.sp_zoom.setSingleStep(10.0)
+        self.sp_zoom.setValue(100.0)
+        self.sp_zoom.setFixedWidth(80)
+        self.sp_zoom.setFixedHeight(22)
+        self.sp_zoom.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+        self.sp_zoom.setKeyboardTracking(False) 
+        self.sp_zoom.editingFinished.connect(self.zoom_from_spinbox)
+        self.status.addPermanentWidget(self.sp_zoom)
 
-        tb.addWidget(QtWidgets.QLabel(" Export:"))
-        self.cmb_fmt = QtWidgets.QComboBox()
-        self.cmb_fmt.addItems(["png", "ico"])
-        tb.addWidget(self.cmb_fmt)
+        btn_out = QtWidgets.QToolButton()
+        btn_out.setText("Zoom Out")
+        btn_out.clicked.connect(self.zoom_out)
+        btn_out.setFixedHeight(22)
+        self.status.addPermanentWidget(btn_out)
 
-        self.chk_trim = QtWidgets.QCheckBox("Trim")
-        self.chk_trim.setChecked(True)
-        tb.addWidget(self.chk_trim)
+        btn_in = QtWidgets.QToolButton()
+        btn_in.setText("Zoom In")
+        btn_in.clicked.connect(self.zoom_in)
+        btn_in.setFixedHeight(22)
+        self.status.addPermanentWidget(btn_in)
 
-        tb.addWidget(QtWidgets.QLabel(" Limit(px):"))
-        self.sp_limit = QtWidgets.QSpinBox()
-        self.sp_limit.setRange(0, 2048)
-        self.sp_limit.setValue(256)
-        self.sp_limit.setToolTip("0 = no limit")
-        tb.addWidget(self.sp_limit)
+        # Presets
+        btn_100 = QtWidgets.QToolButton()
+        btn_100.setText("100%")
+        btn_100.clicked.connect(lambda: self.set_zoom_level(1.0))
+        btn_100.setFixedHeight(22)
+        self.status.addPermanentWidget(btn_100)
 
-        act_export = QtGui.QAction("Export", self)
-        act_export.triggered.connect(self.export_slices)
-        tb.addAction(act_export)
+        btn_200 = QtWidgets.QToolButton()
+        btn_200.setText("200%")
+        btn_200.clicked.connect(lambda: self.set_zoom_level(2.0))
+        btn_200.setFixedHeight(22)
+        self.status.addPermanentWidget(btn_200)
+
+        btn_fit = QtWidgets.QToolButton()
+        btn_fit.setText("Fit")
+        btn_fit.clicked.connect(self.zoom_fit)
+        btn_fit.setFixedHeight(22)
+        self.status.addPermanentWidget(btn_fit)
 
     # -----------------
-    # Event Filter (BG pick)
+    # Zoom Logic
     # -----------------
-    def dragEnterEvent(self, e: QtGui.QDragEnterEvent):
-        if e.mimeData().hasUrls():
-            e.acceptProposedAction()
+    def update_zoom_label(self):
+        m11 = self.view.transform().m11()
+        self.sp_zoom.blockSignals(True)
+        self.sp_zoom.setValue(m11 * 100)
+        self.sp_zoom.blockSignals(False)
 
-    def dropEvent(self, e: QtGui.QDropEvent):
-        urls = e.mimeData().urls()
-        if urls:
-            path = urls[0].toLocalFile()
-            self.load_image(path)
+    def zoom_from_spinbox(self):
+        val = self.sp_zoom.value()
+        self.set_zoom(val / 100.0)
+
+    def set_zoom(self, scale_factor):
+         self.view.resetTransform()
+         self.view.scale(scale_factor, scale_factor)
+         self.update_zoom_label()
+
+    def zoom_in(self):
+        self.view.scale(1.2, 1.2)
+        self.update_zoom_label()
+
+    def zoom_out(self):
+        self.view.scale(1/1.2, 1/1.2)
+        self.update_zoom_label()
+
+    def zoom_fit(self):
+        if self.scene:
+            self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.AspectRatioMode.KeepAspectRatio)
+            self.update_zoom_label()
+
 
     def eventFilter(self, obj, event):
         if obj == self.view.viewport() and event.type() == QtCore.QEvent.Type.MouseButtonPress:
@@ -561,12 +752,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.status.showMessage(f"BG key picked: {self.bg_key}", 3000)
                     self.rebuild_mask()
                     return True
+            # Additional Check for Pick Ref Mode
+            if self.ignore_mode:
+                 pass # managed by grid cell item click
 
         return super().eventFilter(obj, event)
 
-    # -----------------
-    # Image load / preview update
-    # -----------------
     # -----------------
     # Image load / preview update
     # -----------------
@@ -596,6 +787,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.x_lines.clear()
         self.y_lines.clear()
         self.cell_data.clear()
+        self.ignored_cells.clear()
 
         self.image_item = QtWidgets.QGraphicsPixmapItem(QtGui.QPixmap.fromImage(self.preview_qimg))
         self.image_item.setZValue(0)
@@ -631,13 +823,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 except:
                     pass
             
+            # Ref Cell
+            if "ref_cell" in data:
+                self.ref_cell = tuple(data["ref_cell"])
+
             # Restore options
             opts = data.get("options", {})
             if "trim" in opts: self.chk_trim.setChecked(opts["trim"])
             if "limit_px" in opts: self.sp_limit.setValue(opts["limit_px"])
+            if "padding" in opts: self.sp_padding.setValue(opts["padding"])
             if "fmt" in opts: 
                 idx = self.cmb_fmt.findText(opts["fmt"])
                 if idx >= 0: self.cmb_fmt.setCurrentIndex(idx)
+
+            if "use_ref" in opts: self.chk_auto_scale.setChecked(opts["use_ref"]) # compat
+            if "auto_scale" in opts: self.chk_auto_scale.setChecked(opts["auto_scale"])
             
             # Restore mask
             mask_info = data.get("mask", {})
@@ -645,9 +845,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.bg_key = tuple(mask_info["key"])
                 if "tol" in mask_info: self.sl_tol.setValue(mask_info["tol"])
                 if "feather" in mask_info: self.sp_feather.setValue(mask_info["feather"])
-                if "aa" in mask_info: self.chk_aa.setChecked(mask_info["aa"])
-                self.rebuild_mask()
+            if "ignored" in data:
+                for item in data["ignored"]:
+                    self.ignored_cells.add(tuple(item))
 
+            self.rebuild_mask()
             print(f"Grid loaded from {path}")
 
         except Exception as e:
@@ -665,9 +867,13 @@ class MainWindow(QtWidgets.QMainWindow):
             "options": {
                 "trim": self.chk_trim.isChecked(),
                 "limit_px": self.sp_limit.value(),
-                "fmt": self.cmb_fmt.currentText()
+                "padding": self.sp_padding.value(),
+                "fmt": self.cmb_fmt.currentText(),
+                "auto_scale": self.chk_auto_scale.isChecked()
             }
         }
+
+        # if self.ref_cell: ... removed
         
         if self.bg_key:
             data["mask"] = {
@@ -677,6 +883,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 "aa": self.chk_aa.isChecked()
             }
         
+        if self.ignored_cells:
+            data["ignored"] = list(self.ignored_cells)
+
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
@@ -725,11 +934,19 @@ class MainWindow(QtWidgets.QMainWindow):
             self._redraw_grid_lines()
 
     def clear_grid(self):
-        self.x_lines.clear()
-        self.y_lines.clear()
-        self._redraw_grid_lines()
+        if not self.x_lines and not self.y_lines:
+            return
 
-    # ✅ called by draggable line
+        reply = QtWidgets.QMessageBox.question(
+            self, "Clear Grid", "Are you sure you want to clear all grid lines?",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No
+        )
+        if reply == QtWidgets.QMessageBox.StandardButton.Yes:
+            self.x_lines.clear()
+            self.y_lines.clear()
+            self._redraw_grid_lines()
+
     # ✅ called by draggable line
     def on_line_moved(self, axis: str, old: int, new: int):
         if self.preview_qimg is None:
@@ -770,6 +987,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cell_data[(r, c)] = new_name
         self._redraw_grid_lines() # Refresh labels
 
+    def on_cell_clicked(self, r, c):
+        if self.ignore_mode:
+            if (r, c) in self.ignored_cells:
+                self.ignored_cells.remove((r, c))
+            else:
+                self.ignored_cells.add((r, c))
+            self._redraw_grid_lines()
+            
+    def toggle_ignore_mode(self, checked):
+        self.ignore_mode = checked
+        if checked:
+            self.pick_bg_mode = False
+            self.btn_pick_bg.setChecked(False)
+            self.view.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+            self.status.showMessage("Ignore Cell Mode: Click cells to exclude them from export (Red X).", 4000)
+            self.show_toast("Ignore Mode: Click cells to exclude (Red X)")
+        else:
+            self.view.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
+            self.hide_toast()
+
     def _redraw_grid_lines(self):
         # remove old grid items
         for it in self.grid_items:
@@ -793,9 +1030,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 
                 # Check if we have a name
                 name = self.cell_data.get((r, c), "")
+                is_ignored = (r, c) in self.ignored_cells
                 
                 rect = QtCore.QRectF(x0, y0, x1 - x0, y1 - y0)
-                cell_item = GridCellItem(r, c, rect, name, self.on_cell_rename)
+                cell_item = GridCellItem(r, c, rect, name, self.on_cell_rename, self.on_cell_clicked, is_ignored)
                 self.scene.addItem(cell_item)
                 self.grid_items.append(cell_item)
 
@@ -853,9 +1091,16 @@ class MainWindow(QtWidgets.QMainWindow):
     # -----------------
     def toggle_pick_bg(self, checked: bool):
         self.pick_bg_mode = checked
+        if checked:
+            self.ignore_mode = False
+            self.btn_ignore_mode.setChecked(False)
+
         self.view.setCursor(QtCore.Qt.CursorShape.CrossCursor if checked else QtCore.Qt.CursorShape.ArrowCursor)
         if checked:
             self.status.showMessage("Pick BG mode: click on image to choose background color.", 4000)
+            self.show_toast("Pick BG: Click image to set transparent color")
+        else:
+            self.hide_toast()
 
     def rebuild_mask(self):
         if self.orig_qimg is None:
@@ -911,13 +1156,60 @@ class MainWindow(QtWidgets.QMainWindow):
             fmt=self.cmb_fmt.currentText().lower(),
             trim=self.chk_trim.isChecked(),
             limit_px=int(self.sp_limit.value()),
+            padding=int(self.sp_padding.value()),
+            auto_scale=self.chk_auto_scale.isChecked(),
         )
 
         rgba_full = qimage_to_rgba_np(self.preview_qimg)
         H, W = rgba_full.shape[:2]
 
+        # Grid coords
         xs = [0] + sorted(set([x for x in self.x_lines if 0 < x < W])) + [W]
         ys = [0] + sorted(set([y for y in self.y_lines if 0 < y < H])) + [H]
+
+        # --- Calculate Scale Factor ---
+        ref_scale_factor = -1.0
+        
+        if opts.auto_scale and opts.limit_px > 0:
+            # First pass: Find max Area (trimmed) among all cells
+            max_area = -1
+            max_w, max_h = 0, 0
+            
+            # Temporary loop to find max cell
+            for r in range(len(ys) - 1):
+                for c in range(len(xs) - 1):
+                    x0, x1 = xs[c], xs[c + 1]
+                    y0, y1 = ys[r], ys[r + 1]
+                    
+                    if x1 <= x0 or y1 <= y0: continue
+                    
+                    # Ignore Check
+                    if (r, c) in self.ignored_cells:
+                        continue
+
+                    cell_tmp = rgba_full[y0:y1, x0:x1].copy()
+                    
+                    if np.all(cell_tmp[..., 3] == 0): continue
+
+                    if opts.trim:
+                        cell_tmp = trim_transparent(cell_tmp)
+                        if np.all(cell_tmp[..., 3] == 0): continue
+                    
+                    mw, mh = cell_tmp.shape[1], cell_tmp.shape[0]
+                    area = mw * mh
+                    if area > max_area:
+                        max_area = area
+                        max_w, max_h = mw, mh
+            
+            # Calc scale factor for max_w, max_h
+            if max_area > 0:
+                available = max(1, opts.limit_px - opts.padding * 2)
+                scale_w = available / max_w
+                scale_h = available / max_h
+                ref_scale_factor = min(scale_w, scale_h)
+            
+            if ref_scale_factor <= 0:
+                ref_scale_factor = 1.0
 
         saved = 0
         idx = 0
@@ -928,23 +1220,47 @@ class MainWindow(QtWidgets.QMainWindow):
                 y0, y1 = ys[r], ys[r + 1]
                 if x1 <= x0 or y1 <= y0:
                     continue
+                
+                # Ignore Check
+                if (r, c) in self.ignored_cells:
+                    continue
 
                 cell = rgba_full[y0:y1, x0:x1].copy()
-
-                # ✅ (요구사항) 완전 빈(완전 투명) 셀은 버림
+                
+                # Check for empty cell content
                 if np.all(cell[..., 3] == 0):
                     continue
 
                 if opts.trim:
                     cell = trim_transparent(cell)
                     if np.all(cell[..., 3] == 0):
-                        continue
+                        continue # Skip empty
+                
+                # --- Resize Logic ---
+                final_cell = cell
 
                 if opts.limit_px > 0:
-                    cell = limit_size_keep_aspect(cell, opts.limit_px)
-                    if np.all(cell[..., 3] == 0):
-                        continue
+                    # Target dimension
+                    final_dim = opts.limit_px
+                    content_dim = max(1, final_dim - opts.padding * 2)
+                    
+                    if opts.auto_scale and ref_scale_factor > 0:
+                        # Apply Fixed Scale
+                        final_cell = resize_by_scale(cell, ref_scale_factor)
+                    else:
+                        # Scale to Fit Individual
+                        final_cell = limit_size_keep_aspect(cell, content_dim)
+                    
+                    # Pad to Final Canvas (limit_px)
+                    final_cell = pad_image_center(final_cell, final_dim, final_dim)
 
+                elif opts.padding > 0:
+                     # No limit, but padding requested?
+                     # Just add padding around current size
+                     h, w = final_cell.shape[:2]
+                     final_cell = pad_image_center(final_cell, w + opts.padding*2, h + opts.padding*2)
+
+                # --- Save ---
                 if (r, c) in self.cell_data and self.cell_data[(r, c)].strip():
                     base = self.cell_data[(r, c)].strip()
                 else:
@@ -953,12 +1269,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
                 if opts.fmt == "png":
                     path = os.path.join(out_dir, base + ".png")
-                    Image.fromarray(cell, mode="RGBA").save(path, format="PNG")
+                    Image.fromarray(final_cell, mode="RGBA").save(path, format="PNG")
                     saved += 1
 
                 elif opts.fmt == "ico":
                     path = os.path.join(out_dir, base + ".ico")
-                    pil = Image.fromarray(cell, mode="RGBA")
+                    pil = Image.fromarray(final_cell, mode="RGBA")
 
                     sizes = []
                     for s in [16, 24, 32, 48, 64, 128, 256]:
@@ -979,6 +1295,29 @@ class MainWindow(QtWidgets.QMainWindow):
         self.status.showMessage(f"Exported {saved} file(s) to: {out_dir}", 6000)
 
 
+    def show_toast(self, text):
+        self.lbl_toast.setText(text)
+        self.lbl_toast.adjustSize()
+        self.lbl_toast.show()
+        self.lbl_toast.raise_()
+        self._update_toast_pos()
+
+    def hide_toast(self):
+        self.lbl_toast.hide()
+
+    def _update_toast_pos(self):
+        if self.lbl_toast.isVisible():
+            # Position at bottom center of the window, above status bar
+            x = (self.width() - self.lbl_toast.width()) // 2
+            y = self.height() - self.status.height() - self.lbl_toast.height() - 20
+            self.lbl_toast.move(x, y)
+
+    def resizeEvent(self, e: QtGui.QResizeEvent):
+        super().resizeEvent(e)
+        self._update_toast_pos()
+
+
+# -----------------------------
 # -----------------------------
 # Main
 # -----------------------------
