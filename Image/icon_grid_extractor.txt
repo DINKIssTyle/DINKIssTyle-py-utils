@@ -1,0 +1,1 @@
+qtpy PySide6 pillow numpy
