@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Image/manual/icon_grid_extractor.png" alt="icon_grid_extractor">
+  <img src="/manual/icon_grid_extractor.png" alt="icon_grid_extractor">
 </p>
 
 # Icon Grid Extractor
