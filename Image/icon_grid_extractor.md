@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="Image/manual/icon_grid_extractor.png" alt="icon_grid_extractor">
+</p>
+
 # Icon Grid Extractor
 
 **Icon Grid Extractor** is a Python-based GUI tool designed to easily extract individual icons or sprites from large image sheets.
