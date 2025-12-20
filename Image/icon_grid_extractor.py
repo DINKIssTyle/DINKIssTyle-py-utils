@@ -342,7 +342,7 @@ class VRuler(QtWidgets.QWidget):
 # -----------------------------
 class GraphicsView(QtWidgets.QGraphicsView):
     viewChanged = QtCore.Signal()
-    fileDropped = QtCore.Signal(str) # Path to file
+    # fileDropped removed to let parent handle it
 
     def __init__(self, scene, parent=None):
         super().__init__(scene, parent)
@@ -353,7 +353,7 @@ class GraphicsView(QtWidgets.QGraphicsView):
         self.setDragMode(QtWidgets.QGraphicsView.DragMode.ScrollHandDrag)
         self.setTransformationAnchor(QtWidgets.QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setResizeAnchor(QtWidgets.QGraphicsView.ViewportAnchor.AnchorUnderMouse)
-        self.setAcceptDrops(True)
+        # self.setAcceptDrops(True)  <-- Disabled ensures event propogation to MainWindow
 
     def wheelEvent(self, e: QtGui.QWheelEvent):
         if e.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier:
@@ -372,19 +372,8 @@ class GraphicsView(QtWidgets.QGraphicsView):
         super().resizeEvent(e)
         self.viewChanged.emit()
 
-    # Drag and Drop
-    def dragEnterEvent(self, e: QtGui.QDragEnterEvent):
-        if e.mimeData().hasUrls():
-            e.accept()
-        else:
-            e.ignore()
+    # Drag and Drop handlers removed from View so they bubble up to MainWindow
 
-    def dropEvent(self, e: QtGui.QDropEvent):
-        if e.mimeData().hasUrls():
-            urls = e.mimeData().urls()
-            if urls:
-                path = urls[0].toLocalFile()
-                self.fileDropped.emit(path)
 
 
 
@@ -406,12 +395,13 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         self.setWindowTitle("Icon Grid Extractor - DINKI'ssTyle")
         self.resize(1100, 800)
+        self.setAcceptDrops(True)
 
         # Scene/View
         self.scene = QtWidgets.QGraphicsScene(self)
         self.view = GraphicsView(self.scene)
         self.view.viewChanged.connect(self.sync_rulers)
-        self.view.fileDropped.connect(self.load_image)
+
 
         # Rulers
         self.hRuler = HRuler()
@@ -547,6 +537,16 @@ class MainWindow(QtWidgets.QMainWindow):
     # -----------------
     # Event Filter (BG pick)
     # -----------------
+    def dragEnterEvent(self, e: QtGui.QDragEnterEvent):
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+
+    def dropEvent(self, e: QtGui.QDropEvent):
+        urls = e.mimeData().urls()
+        if urls:
+            path = urls[0].toLocalFile()
+            self.load_image(path)
+
     def eventFilter(self, obj, event):
         if obj == self.view.viewport() and event.type() == QtCore.QEvent.Type.MouseButtonPress:
             if self.pick_bg_mode and self.orig_qimg is not None and self.image_item is not None:
