@@ -8,7 +8,7 @@ from PIL import Image
 # Qt Libraries
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
                                QLabel, QLineEdit, QPushButton, QFileDialog, 
-                               QCheckBox, QSpinBox, QTextEdit, QMessageBox, QGroupBox)
+                               QCheckBox, QSpinBox, QTextEdit, QMessageBox, QGroupBox, QComboBox)
 from PySide6.QtCore import QThread, Signal, Qt
 
 # Suppress Warnings
@@ -30,13 +30,14 @@ class ConverterThread(QThread):
     log_signal = Signal(str)
     finish_signal = Signal(bool, str)
 
-    def __init__(self, audio_path, image_path, output_path, use_resize, target_height):
+    def __init__(self, audio_path, image_path, output_path, use_resize, target_height, audio_bitrate):
         super().__init__()
         self.audio_path = audio_path
         self.image_path = image_path
         self.output_path = output_path
         self.use_resize = use_resize
         self.target_height = target_height
+        self.audio_bitrate = audio_bitrate
 
     def run(self):
         try:
@@ -89,7 +90,7 @@ class ConverterThread(QThread):
                 self.output_path,
                 codec='libx264',
                 audio_codec='aac',      # Standard MP4 audio codec
-                audio_bitrate='320k',   # Minimize audio quality loss
+                audio_bitrate=self.audio_bitrate,   # User selected bitrate
                 temp_audiofile='temp-audio.m4a', # Render audio first to prevent loss
                 remove_temp=True,       # Cleanup temp file
                 fps=24,
@@ -139,25 +140,38 @@ class AppWindow(QWidget):
         group_image.setLayout(layout_image)
         layout.addWidget(group_image)
 
-        # 3. Resolution Settings
-        group_opt = QGroupBox("Resolution Settings")
+        # 3. Resolution & Quality Settings
+        group_opt = QGroupBox("3. Settings")
         layout_opt = QHBoxLayout()
+        
+        # Resize
         self.check_resize = QCheckBox("Resize Image")
         self.check_resize.setChecked(True)
         self.check_resize.toggled.connect(self.toggle_spinbox)
         layout_opt.addWidget(self.check_resize)
-        layout_opt.addStretch()
+        
         layout_opt.addWidget(QLabel("Height (px):"))
         self.spin_height = QSpinBox()
         self.spin_height.setRange(100, 4320)
         self.spin_height.setValue(1080)
         self.spin_height.setSingleStep(10)
         layout_opt.addWidget(self.spin_height)
+
+        layout_opt.addSpacing(20)
+
+        # Bitrate
+        layout_opt.addWidget(QLabel("Audio Quality:"))
+        self.combo_bitrate = QComboBox()
+        self.combo_bitrate.addItems(["320k", "256k", "192k", "128k", "64k"])
+        self.combo_bitrate.setCurrentIndex(0) # Default 320k
+        layout_opt.addWidget(self.combo_bitrate)
+
+        layout_opt.addStretch()
         group_opt.setLayout(layout_opt)
         layout.addWidget(group_opt)
 
         # 4. Save Path
-        group_save = QGroupBox("3. Output Path")
+        group_save = QGroupBox("4. Output Path")
         layout_save = QHBoxLayout()
         self.entry_save = QLineEdit()
         btn_save = QPushButton("Save As...")
@@ -219,8 +233,9 @@ class AppWindow(QWidget):
         
         use_resize = self.check_resize.isChecked()
         height = self.spin_height.value()
+        bitrate = self.combo_bitrate.currentText()
 
-        self.worker = ConverterThread(audio, image, output, use_resize, height)
+        self.worker = ConverterThread(audio, image, output, use_resize, height, bitrate)
         self.worker.log_signal.connect(self.log_append)
         self.worker.finish_signal.connect(self.on_finished)
         self.worker.start()

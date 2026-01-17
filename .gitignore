@@ -3,3 +3,5 @@
 .DS_Store
 Image/__pycache__/icon_grid_extractor.cpython-313.pyc
 .DS_Store
+.venv
+__pycache__
